@@ -70,6 +70,10 @@ export const config = {
   trackTraceAir: 'https://www.track-trace.com/aircargo',
   trackTraceContainer: 'https://www.track-trace.com/container',
 
+  /** Pier2Pier free container tracking endpoint (ТЗ §5/§15, sea only). */
+  pier2pierBaseUrl:
+    process.env.PIER2PIER_BASE_URL || 'https://www.pier2pier.com/links/tracking2.php',
+
   port: int('PORT', 3001),
 };
 

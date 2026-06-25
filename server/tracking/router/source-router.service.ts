@@ -5,6 +5,7 @@ import { Connector } from '../connectors/connector.interface';
 import { TrackTraceConnector } from '../connectors/track-trace.connector';
 import { CarrierWebConnector } from '../connectors/carrier-web.connector';
 import { CargoAiConnector } from '../connectors/cargoai.connector';
+import { Pier2PierConnector } from '../connectors/pier2pier.connector';
 import { DemoConnector } from '../connectors/demo.connector';
 
 /**
@@ -12,12 +13,14 @@ import { DemoConnector } from '../connectors/demo.connector';
  *
  * Live order:
  *   air  → CargoAI (if key) → track-trace.com → carrier website (fallback)
- *   sea  → track-trace.com → carrier website (fallback)
+ *   sea  → Pier2Pier (free) → track-trace.com → carrier website (fallback)
  * Demo mode → the deterministic DemoConnector only.
  *
- * Note: when a CargoAI/RapidAPI key is present it is tried first for air, since
- * it is the reliable structured source; track-trace remains as a fallback (it
- * generally can't be scraped from a serverless host without a browser).
+ * Notes:
+ *  - For air, CargoAI is tried first when a key is present (reliable structured
+ *    source); track-trace remains a fallback.
+ *  - For sea, Pier2Pier is tried first: it serves server-rendered HTML and so
+ *    works without a browser (unlike track-trace.com on a serverless host).
  *
  * Adding a new source = register its connector here; the pipeline is unchanged.
  */
@@ -27,6 +30,7 @@ export class SourceRouter {
     private readonly trackTrace: TrackTraceConnector,
     private readonly carrierWeb: CarrierWebConnector,
     private readonly cargoai: CargoAiConnector,
+    private readonly pier2pier: Pier2PierConnector,
     private readonly demo: DemoConnector,
   ) {}
 
@@ -36,6 +40,9 @@ export class SourceRouter {
     const chain: Connector[] = [];
     if (type === ShipmentType.AIR && (config.cargoaiApiKey || config.rapidapiKey)) {
       chain.push(this.cargoai);
+    }
+    if (type === ShipmentType.SEA) {
+      chain.push(this.pier2pier);
     }
     chain.push(this.trackTrace);
     chain.push(this.carrierWeb);

@@ -10,6 +10,7 @@ import { AiParser } from './parsers/ai.parser';
 import { TrackTraceConnector } from './connectors/track-trace.connector';
 import { CarrierWebConnector } from './connectors/carrier-web.connector';
 import { CargoAiConnector } from './connectors/cargoai.connector';
+import { Pier2PierConnector } from './connectors/pier2pier.connector';
 import { DemoConnector } from './connectors/demo.connector';
 
 @Module({
@@ -25,6 +26,7 @@ import { DemoConnector } from './connectors/demo.connector';
     TrackTraceConnector,
     CarrierWebConnector,
     CargoAiConnector,
+    Pier2PierConnector,
     DemoConnector,
   ],
 })

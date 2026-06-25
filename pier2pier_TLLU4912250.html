@@ -1,0 +1,28 @@
+
+						<script>
+							function getCookie(cname) {
+								var name = cname + '=';
+								var decodedCookie = decodeURIComponent(document.cookie);
+								var ca = decodedCookie.split(';');
+								for(var i = 0; i <ca.length; i++) {
+									var c = ca[i];
+									while (c.charAt(0) == ' ') {
+										c = c.substring(1);
+									}
+									if (c.indexOf(name) == 0) {
+										return c.substring(name.length, c.length);
+									}
+								}
+								false;
+							}
+							
+							var cookie = getCookie('Pier2PierLOG')
+							
+							if(cookie) {
+								// alert(cookie);
+								location.reload(true);
+							} else {
+								// no cookie
+							}
+						</script>
+					<br><br><br><b style="color: #ff0000;font-family: arial,helvetica;font-size: 8pt;text-decoration: none;">In order to view this page you need to enable cookies from Pier2pier.com, or <a href='#' onClick='window.location.reload()'>refresh this page.</a></b><br><br><br>
