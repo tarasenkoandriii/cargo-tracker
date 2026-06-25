@@ -54,6 +54,14 @@ export const config = {
   cargoaiTimeoutMs: int('CARGOAI_TIMEOUT_MS', 15000),
   cargoaiRetries: int('CARGOAI_RETRIES', 2),
 
+  /**
+   * Minimum gap (ms) between consecutive CargoAI/RapidAPI requests. When several
+   * air numbers run concurrently they would otherwise hit RapidAPI's rate limit
+   * at once (429). Pacing the calls this far apart prevents bursts without
+   * lowering overall concurrency. Raise if your plan's QPS is very low.
+   */
+  cargoaiMinGapMs: int('CARGOAI_MIN_GAP_MS', 500),
+
   /** Retries for transient network errors (ТЗ §11). */
   retries: int('RETRIES', 1),
 

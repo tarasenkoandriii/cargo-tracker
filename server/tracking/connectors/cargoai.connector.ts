@@ -18,6 +18,25 @@ import {
 import { NormalizerService } from '../normalizer/normalizer.service';
 
 /**
+ * Module-level pacing gate for CargoAI/RapidAPI. Serializes only the *start* of
+ * each outgoing request so consecutive calls are spaced >= cargoaiMinGapMs apart,
+ * preventing 429 bursts when many air numbers run concurrently. The gate is
+ * per-invocation (serverless isolates invocations), so it paces within a single
+ * batch and resets afterwards. It does not serialize the requests themselves —
+ * once started, they still run in parallel.
+ */
+let cargoGate: Promise<void> = Promise.resolve();
+let cargoLastStart = 0;
+function acquireCargoSlot(minGapMs: number): Promise<void> {
+  cargoGate = cargoGate.then(async () => {
+    const wait = Math.max(0, cargoLastStart + minGapMs - Date.now());
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    cargoLastStart = Date.now();
+  });
+  return cargoGate;
+}
+
+/**
  * CargoAI Track & Trace API connector for air cargo (ТЗ §5, §16).
  *
  * Two access modes, auto-selected at runtime:
@@ -104,6 +123,10 @@ export class CargoAiConnector implements Connector {
     };
 
     try {
+      // Space out the start of CargoAI calls so concurrent air numbers don't
+      // all hit RapidAPI's rate limit at once (429).
+      await acquireCargoSlot(config.cargoaiMinGapMs);
+
       // Retry transient errors and rate-limits (429) with backoff. Do NOT retry
       // timeouts — a slow CargoAI pull rarely recovers within the function
       // budget, and retrying it would risk the serverless duration limit. Bail
