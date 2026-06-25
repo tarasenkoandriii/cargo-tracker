@@ -72,7 +72,7 @@ export class Pier2PierConnector implements Connector {
         code === ErrorCode.TIMEOUT ||
         code === ErrorCode.PARSING_FAILED;
       if (i < attempts - 1 && retryable) {
-        ctx.logger.add('query_pier2pier', 'retry', { attempt: i + 1, code });
+        ctx.logger.add('query_pier2pier', 'info', { event: 'retry', attempt: i + 1, code });
         await sleep(config.rateLimitDelayMs + 400 * i);
         continue;
       }
