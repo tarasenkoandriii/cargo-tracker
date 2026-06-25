@@ -122,20 +122,59 @@ export class ResponseBuilder {
     if (!r.found) {
       return { confidence: hasError ? 0.1 : 0.0, dataComplete: false, missing: ['tracking'] };
     }
-    const keys: Array<[string, unknown]> = [
+
+    // Stage gates: an actual departure/arrival time only EXISTS once the cargo
+    // has reached that stage. Requiring them earlier wrongly flags healthy
+    // in-transit shipments as PARTIAL_DATA, so they're only "required" past the
+    // relevant milestone (ТЗ §7 normalized statuses).
+    const status = r.current_status ?? '';
+    const POST_DEPARTURE = new Set([
+      'departed', 'in_transit', 'arrived', 'customs', 'ready_for_pickup',
+      'delivered', 'container_picked_up', 'container_returned',
+    ]);
+    const POST_ARRIVAL = new Set([
+      'arrived', 'customs', 'ready_for_pickup',
+      'delivered', 'container_picked_up', 'container_returned',
+    ]);
+    const departed = POST_DEPARTURE.has(status);
+    const arrived = POST_ARRIVAL.has(status);
+
+    // Core fields: their absence means the record is genuinely incomplete and
+    // triggers PARTIAL_DATA.
+    const core: Array<[string, unknown]> = [
       ['current_status', r.current_status],
       ['eta', r.eta],
-      ['etd', r.etd],
       ['origin', r.origin],
       ['destination', r.destination],
       ['events', r.events.length ? true : null],
     ];
-    if (type === ShipmentType.AIR) keys.push(['actual_departure', r.actual_departure]);
-    if (type === ShipmentType.SEA) keys.push(['actual_arrival', r.actual_arrival]);
+    if (type === ShipmentType.AIR && departed) {
+      core.push(['actual_departure', r.actual_departure]);
+    }
+    if (type === ShipmentType.SEA && arrived) {
+      core.push(['actual_arrival', r.actual_arrival]);
+    }
 
-    const missing = keys.filter(([, v]) => v === null || v === undefined).map(([k]) => k);
-    const present = keys.length - missing.length;
-    const confidence = Math.round((present / keys.length) * 100) / 100;
-    return { confidence, dataComplete: missing.length === 0, missing };
+    // Contextual fields: surfaced in missing_fields and confidence, but their
+    // absence does NOT break completeness. etd is frequently not exposed by sea
+    // carrier views; actual_* before the relevant stage is informational only.
+    const contextual: Array<[string, unknown]> = [['etd', r.etd]];
+    if (type === ShipmentType.AIR && !departed) {
+      contextual.push(['actual_departure', r.actual_departure]);
+    }
+    if (type === ShipmentType.SEA && !arrived) {
+      contextual.push(['actual_arrival', r.actual_arrival]);
+    }
+
+    const coreMissing = core.filter(([, v]) => v === null || v === undefined).map(([k]) => k);
+    const ctxMissing = contextual.filter(([, v]) => v === null || v === undefined).map(([k]) => k);
+    const missing = [...coreMissing, ...ctxMissing];
+
+    const total = core.length + contextual.length;
+    const present = total - missing.length;
+    const confidence = total ? Math.round((present / total) * 100) / 100 : 1;
+
+    // PARTIAL_DATA only when CORE data is missing (stage-aware above).
+    return { confidence, dataComplete: coreMissing.length === 0, missing };
   }
 }
