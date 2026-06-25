@@ -13,7 +13,7 @@ import {
   Connector,
   TrackContext,
   fetchWithTimeout,
-  retry,
+  sleep,
   TimeoutError,
 } from './connector.interface';
 
@@ -54,19 +54,52 @@ export class Pier2PierConnector implements Connector {
     const r = emptyTrackResult();
     r.source_name = this.name;
     const id = ctx.normalizedNumber;
-    const base = config.pier2pierBaseUrl;
     const cookies: string[] = [];
+
+    // Retry the whole flow, REUSING the cookie jar between attempts. Pier2Pier
+    // primes cookies (PHPSESSID, then Pier2PierLOG) across requests, so a 2nd/3rd
+    // attempt with the accumulated jar is what actually returns data — mirroring
+    // a real browser. Also rides through transient IP-based throttling.
+    const attempts = 1 + Math.max(0, config.seaRetries);
+    let result: TrackResult = r;
+    for (let i = 0; i < attempts; i++) {
+      result = await this.attempt(ctx, emptyTrackResult(), id, cookies);
+      result.source_name = this.name;
+      if (result.found) return result;
+      const code = result.error?.code;
+      const retryable =
+        code === ErrorCode.SOURCE_UNAVAILABLE ||
+        code === ErrorCode.TIMEOUT ||
+        code === ErrorCode.PARSING_FAILED;
+      if (i < attempts - 1 && retryable) {
+        ctx.logger.add('query_pier2pier', 'retry', { attempt: i + 1, code });
+        await sleep(config.rateLimitDelayMs + 400 * i);
+        continue;
+      }
+      return result;
+    }
+    return result;
+  }
+
+  /** One full resolve → shell → data pass, sharing the caller's cookie jar. */
+  private async attempt(
+    ctx: TrackContext,
+    r: TrackResult,
+    id: string,
+    cookies: string[],
+  ): Promise<TrackResult> {
+    r.source_name = this.name;
+    const base = config.pier2pierBaseUrl;
 
     try {
       // ── 1) RESOLVE: prime cookies + find the CarrierCode. ──
       const resolveUrl = `${base}?Type=CONT&ID=${encodeURIComponent(id)}&Company=P2P`;
       r.url = resolveUrl;
-      const resolveHtml = await retry(
-        () => this.get(resolveUrl, cookies, base),
-        config.retries,
-        config.rateLimitDelayMs,
-      );
+      const resolveHtml = await this.get(resolveUrl, cookies, base);
       if (this.isAntiBot(resolveHtml)) return this.unavailable(r, ctx, 'anti_bot');
+      // Cookie-priming wall ("enable cookies"): cookies are now set; signal a
+      // retry so the next attempt (with the jar) gets real content.
+      if (this.isCookieWall(resolveHtml)) return this.unavailable(r, ctx, 'cookie_wall');
 
       const carrierCode = this.extractCarrierCode(resolveHtml);
 
@@ -75,31 +108,21 @@ export class Pier2PierConnector implements Connector {
         ? `${base}?CarrierCode=${encodeURIComponent(carrierCode)}&Type=CONT&ID=${encodeURIComponent(id)}`
         : resolveUrl;
       const shellHtml =
-        shellUrl === resolveUrl
-          ? resolveHtml
-          : await retry(
-              () => this.get(shellUrl, cookies, resolveUrl),
-              config.retries,
-              config.rateLimitDelayMs,
-            );
+        shellUrl === resolveUrl ? resolveHtml : await this.get(shellUrl, cookies, resolveUrl);
 
       const iframeUrl = this.extractIframeUrl(shellHtml);
       if (!iframeUrl) {
         ctx.logger.add('query_pier2pier', 'error', { reason: 'no_iframe' });
         r.error = {
           code: ErrorCode.PARSING_FAILED,
-          message: 'Pier2Pier shell returned no data iframe (layout may have changed)',
+          message: 'Pier2Pier shell returned no data iframe (cookie-priming or layout change)',
           source: this.name,
         };
         return r;
       }
 
       // ── 3) DATA: the iframe HTML holds the real moves table. ──
-      const dataHtml = await retry(
-        () => this.get(iframeUrl, cookies, shellUrl),
-        config.retries,
-        config.rateLimitDelayMs,
-      );
+      const dataHtml = await this.get(iframeUrl, cookies, shellUrl);
 
       ctx.logger.add('query_pier2pier', 'success', { carrierCode: carrierCode ?? null });
       return this.parse(dataHtml, r, carrierCode);
@@ -119,26 +142,37 @@ export class Pier2PierConnector implements Connector {
     }
   }
 
-  /** GET with cookie jar handling and a Referer; collects Set-Cookie for reuse. */
+  /** GET with cookie jar + browser-like headers and the sea timeout. */
   private async get(url: string, cookies: string[], referer: string): Promise<string> {
     const res = await fetchWithTimeout(
       url,
       {
         headers: {
           'user-agent': UA,
-          accept: 'text/html,application/xhtml+xml',
+          accept:
+            'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+          'accept-language': 'en-US,en;q=0.9',
+          'upgrade-insecure-requests': '1',
+          'sec-fetch-dest': 'document',
+          'sec-fetch-mode': 'navigate',
+          'sec-fetch-site': cookies.length ? 'same-origin' : 'none',
+          'sec-fetch-user': '?1',
           referer,
           ...(cookies.length ? { cookie: cookies.join('; ') } : {}),
         },
       },
-      config.timeoutMs,
+      config.seaTimeoutMs,
     );
-    // Accumulate cookies (PHPSESSID, Pier2PierLOG, …) across the 3 steps.
+    // Accumulate cookies (PHPSESSID, Pier2PierLOG, …) across steps and attempts.
     const setCookie =
       (res.headers as any).getSetCookie?.() ?? res.headers.get('set-cookie');
     for (const c of toCookieList(setCookie)) {
       const pair = c.split(';')[0].trim();
-      if (pair && !cookies.includes(pair)) cookies.push(pair);
+      const name = pair.split('=')[0];
+      // Replace any prior value for the same cookie name; else append.
+      const idx = cookies.findIndex((x) => x.split('=')[0] === name);
+      if (pair && idx >= 0) cookies[idx] = pair;
+      else if (pair) cookies.push(pair);
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.text();
@@ -146,6 +180,11 @@ export class Pier2PierConnector implements Connector {
 
   private isAntiBot(html: string): boolean {
     return /captcha|are you a human|cf-challenge|recaptcha|just a moment/i.test(html);
+  }
+
+  /** The "In order to view this page you need to enable cookies" priming wall. */
+  private isCookieWall(html: string): boolean {
+    return /enable cookies/i.test(html) && !/<iframe/i.test(html);
   }
 
   private unavailable(r: TrackResult, ctx: TrackContext, reason: string): TrackResult {

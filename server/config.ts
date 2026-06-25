@@ -35,6 +35,15 @@ export const config = {
    */
   concurrency: int('CONCURRENCY', 4),
 
+  /**
+   * Sea (Pier2Pier) is slower and primes cookies across requests, plus it can
+   * throttle datacenter IPs. Give it a longer timeout and a couple of retries
+   * (the connector reuses the cookie jar between attempts), to ride through
+   * cookie-priming and transient anti-bot responses.
+   */
+  seaTimeoutMs: int('SEA_TIMEOUT_MS', 15000),
+  seaRetries: int('SEA_RETRIES', 2),
+
   /** Retries for transient network errors (ТЗ §11). */
   retries: int('RETRIES', 1),
 
