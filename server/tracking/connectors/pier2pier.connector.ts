@@ -228,6 +228,7 @@ export class Pier2PierConnector implements Connector {
    */
   private parse(html: string, r: TrackResult, carrierCode: string | null): TrackResult {
     if (/msc-flow-tracking/i.test(html)) return this.parseMsc(html, r);
+    if (/tracing_by_container|hl-tbl/i.test(html)) return this.parseHapag(html, r);
     return this.parseKendo(html, r, carrierCode);
   }
 
@@ -449,6 +450,119 @@ export class Pier2PierConnector implements Connector {
     r.raw_status = last.raw_text;
     return r;
   }
+
+  /**
+   * Parse the Hapag-Lloyd layout (Pier2Pier embeds Hapag's own tracing page).
+   * The moves table is `table.hl-tbl` with columns Status | Place of Activity |
+   * Date | Time | Transport | Voyage No. Bold rows (td.strong) are actual data;
+   * plain rows are planned movements. Never fabricates data.
+   */
+  private parseHapag(html: string, r: TrackResult): TrackResult {
+    const $ = cheerio.load(html);
+    const events: TrackingEvent[] = [];
+    const seen = new Set<string>();
+
+    $('table.hl-tbl tbody tr, table.hal-table tbody tr').each((_i, tr) => {
+      const tds = $(tr).find('> td');
+      if (tds.length < 4) return;
+      const cell = (i: number) =>
+        ($(tds[i]).find('.nonEditableContent').first().text() || $(tds[i]).text())
+          .replace(/\s+/g, ' ')
+          .trim();
+      const status = cell(0);
+      const place = cell(1);
+      const date = cell(2);
+      const time = cell(3);
+      const transport = tds.length > 4 ? cell(4) : '';
+      const voyage = tds.length > 5 ? cell(5) : '';
+
+      const dM = date.match(/(\d{4})-(\d{2})-(\d{2})/);
+      if (!dM || !status) return;
+      const tM = time.match(/(\d{1,2}):(\d{2})/);
+      const datetime = `${dM[1]}-${dM[2]}-${dM[3]}T${tM ? `${tM[1].padStart(2, '0')}:${tM[2]}` : '00:00'}:00`;
+
+      // Bold rows (td.strong) are actual; plain rows are planned/estimated.
+      const isActual = $(tds[0]).hasClass('strong');
+      const key = `${datetime}|${status.toUpperCase()}|${place}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+
+      const vessel =
+        transport && !/^truck$/i.test(transport)
+          ? transport + (voyage ? ` (${voyage})` : '')
+          : '';
+
+      events.push({
+        event_code: null,
+        event_name: status,
+        normalized_status: hapagMove(status),
+        location: place || null,
+        datetime,
+        raw_text: status + (vessel ? ` · ${vessel}` : ''),
+        raw_datetime: datetime,
+        is_actual: isActual,
+        timezone: null,
+        timezone_confidence: 'unknown',
+      });
+    });
+
+    if (events.length === 0) {
+      r.error = {
+        code: ErrorCode.PARSING_FAILED,
+        message: 'Hapag-Lloyd data page fetched but no moves could be parsed',
+        source: this.name,
+      };
+      return r;
+    }
+
+    events.sort((a, b) => ts(a.datetime) - ts(b.datetime));
+    const actual = events.filter((e) => e.is_actual && e.datetime);
+    const planned = events.filter((e) => !e.is_actual);
+    const last = actual.length ? actual[actual.length - 1] : events[events.length - 1];
+
+    r.origin = events[0].location;
+    r.destination = events[events.length - 1].location;
+
+    // ETA = last (planned) vessel arrival in the chain.
+    const lastArrival = [...events].reverse().find((e) => /arriv/i.test(e.event_name ?? ''));
+    if (lastArrival) r.eta = lastArrival.datetime;
+
+    // Container type from the "Type"/"Description" labels, e.g. "45GP (HIGH CUBE CONT.)".
+    const labelled = (name: string): string => {
+      let out = '';
+      $('label').each((_i, l) => {
+        if (out) return;
+        if (new RegExp(`^${name}$`, 'i').test($(l).text().trim())) {
+          out = $(l).closest('td').nextAll('td').find('.nonEditableContent').first().text().trim();
+        }
+      });
+      return out;
+    };
+    const ctype = labelled('Type');
+    const cdesc = labelled('Description');
+    if (ctype) r.container_milestones = { container_type: cdesc ? `${ctype} (${cdesc})` : ctype };
+
+    r.carrier = { name: 'Hapag-Lloyd', code: 'HLCU', source: 'pier2pier' };
+
+    let current = last.normalized_status;
+    // A discharge at a transhipment port (not the final destination) with later
+    // planned moves means the box is still in transit, not "arrived".
+    if (
+      current === 'arrived' &&
+      planned.length > 0 &&
+      r.destination &&
+      last.location &&
+      last.location !== r.destination
+    ) {
+      current = 'in_transit';
+    }
+
+    r.found = true;
+    r.events = events;
+    r.current_status = current;
+    r.raw_status = last.raw_text;
+    return r;
+  }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -524,6 +638,30 @@ function matchMove(rowText: string): { phrase: string; status: NormalizedStatus 
         /[A-Za-z]/.test(c),
     );
   return { phrase: cell ?? 'move', status: 'unknown' };
+}
+
+/**
+ * Map Hapag-Lloyd milestone names to the normalized vocabulary (ТЗ §7).
+ * Hapag uses its own wording (e.g. "Gate out empty", "Arrival in"), so it needs
+ * a dedicated table rather than the generic MOVE_RULES.
+ */
+const HAPAG_RULES: Array<[RegExp, NormalizedStatus]> = [
+  [/GATE\s+OUT\s+EMPTY|EMPTY\s+TO\s+SHIPPER|EMPTY\s+DELIVERY|EMPTY\s+DISPATCH/i, 'container_picked_up'],
+  [/EMPTY\s+RETURN/i, 'container_returned'],
+  [/ARRIVAL\s+IN|GATE\s+IN|RECEIVED/i, 'in_origin_terminal'],
+  [/LOADED/i, 'in_origin_terminal'],
+  [/VESSEL\s+DEPART|DEPARTED|DEPARTURE/i, 'departed'],
+  [/TRANSSHIP|TRANSHIP/i, 'in_transit'],
+  [/DISCHARG/i, 'arrived'],
+  [/VESSEL\s+ARRIV|ARRIVED|ARRIVAL/i, 'arrived'],
+  [/CUSTOMS|CLEARED/i, 'customs'],
+  [/AVAILABLE\s+FOR\s+DELIVERY|READY\s+FOR/i, 'ready_for_pickup'],
+  [/GATE\s+OUT\s+FULL|DELIVERED/i, 'delivered'],
+];
+
+function hapagMove(status: string): NormalizedStatus {
+  for (const [re, s] of HAPAG_RULES) if (re.test(status)) return s;
+  return 'unknown';
 }
 
 /** Minimal SCAC → carrier name map for common lines (extend as needed). */
