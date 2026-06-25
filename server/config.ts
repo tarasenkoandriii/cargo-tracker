@@ -55,14 +55,13 @@ export const config = {
   cargoaiRetries: int('CARGOAI_RETRIES', 2),
 
   /**
-   * Minimum gap (ms) between consecutive CargoAI/RapidAPI requests. The connector
-   * runs a small queue: each air call starts at least this long after the
-   * previous one, so concurrent air numbers never hit RapidAPI's per-second rate
-   * limit at once (429). 3000ms ≈ 0.33 req/sec, which the free tier tolerates
-   * (1500ms still tripped 429 for ~2 of 5 numbers). Lower if your plan allows
-   * higher QPS; raise further if 429s persist.
+   * Minimum gap (ms) between consecutive CargoAI/RapidAPI requests, to avoid
+   * per-second 429 bursts when air numbers run concurrently. NOTE: if requests
+   * fail *more* as this grows, the bottleneck is the plan's request QUOTA (not a
+   * rate limit) — pacing can't fix a depleted quota. 1500ms was the best
+   * observed value; raise only if you confirm a genuine per-second rate limit.
    */
-  cargoaiMinGapMs: int('CARGOAI_MIN_GAP_MS', 3000),
+  cargoaiMinGapMs: int('CARGOAI_MIN_GAP_MS', 1500),
 
   /** Retries for transient network errors (ТЗ §11). */
   retries: int('RETRIES', 1),
