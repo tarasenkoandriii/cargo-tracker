@@ -1,0 +1,159 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CargoTrackingResponse",
+  "type": "object",
+  "required": ["request_id", "checked_at", "summary", "results"],
+  "properties": {
+    "request_id": { "type": "string" },
+    "checked_at": { "type": "string", "format": "date-time" },
+    "summary": {
+      "type": "object",
+      "required": ["total", "success", "failed"],
+      "properties": {
+        "total": { "type": "integer" },
+        "success": { "type": "integer" },
+        "failed": { "type": "integer" }
+      }
+    },
+    "results": { "type": "array", "items": { "$ref": "#/definitions/result" } },
+    "results_short": { "type": "array", "items": { "$ref": "#/definitions/shortResult" } }
+  },
+  "definitions": {
+    "carrier": {
+      "type": ["object", "null"],
+      "properties": {
+        "name": { "type": ["string", "null"] },
+        "code": { "type": ["string", "null"] },
+        "source": { "type": ["string", "null"] }
+      }
+    },
+    "event": {
+      "type": "object",
+      "properties": {
+        "event_code": { "type": ["string", "null"] },
+        "event_name": { "type": ["string", "null"] },
+        "normalized_status": { "type": ["string", "null"] },
+        "location": { "type": ["string", "null"] },
+        "datetime": { "type": ["string", "null"] },
+        "raw_text": { "type": ["string", "null"] }
+      }
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "INVALID_FORMAT",
+            "NOT_FOUND",
+            "SOURCE_UNAVAILABLE",
+            "TIMEOUT",
+            "CAPTCHA_REQUIRED",
+            "LOGIN_REQUIRED",
+            "PARSING_FAILED",
+            "PARTIAL_DATA"
+          ]
+        },
+        "message": { "type": "string" },
+        "source": { "type": ["string", "null"] }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": ["input", "detected", "tracking", "source", "quality", "errors"],
+      "properties": {
+        "input": {
+          "type": "object",
+          "required": ["id", "number"],
+          "properties": {
+            "id": { "type": ["string", "null"] },
+            "number": { "type": "string" }
+          }
+        },
+        "detected": {
+          "type": "object",
+          "required": ["type", "normalized_number", "carrier"],
+          "properties": {
+            "type": { "type": "string", "enum": ["air_awb", "sea_container", "unknown"] },
+            "normalized_number": { "type": "string" },
+            "carrier": { "$ref": "#/definitions/carrier" }
+          }
+        },
+        "tracking": {
+          "type": "object",
+          "required": ["current_status", "raw_status", "last_event", "dates", "route", "events"],
+          "properties": {
+            "current_status": { "type": ["string", "null"] },
+            "raw_status": { "type": ["string", "null"] },
+            "last_event": {
+              "type": ["object", "null"],
+              "properties": {
+                "event_code": { "type": ["string", "null"] },
+                "event_name": { "type": ["string", "null"] },
+                "location": { "type": ["string", "null"] },
+                "datetime": { "type": ["string", "null"] },
+                "is_actual": { "type": ["boolean", "null"] }
+              }
+            },
+            "dates": {
+              "type": "object",
+              "properties": {
+                "etd": { "type": ["string", "null"] },
+                "eta": { "type": ["string", "null"] },
+                "actual_departure": { "type": ["string", "null"] },
+                "actual_arrival": { "type": ["string", "null"] }
+              }
+            },
+            "route": {
+              "type": "object",
+              "properties": {
+                "origin": { "type": ["string", "null"] },
+                "destination": { "type": ["string", "null"] },
+                "transit_points": { "type": "array", "items": { "type": "string" } }
+              }
+            },
+            "events": { "type": "array", "items": { "$ref": "#/definitions/event" } },
+            "container_milestones": { "type": "object" }
+          }
+        },
+        "source": {
+          "type": "object",
+          "required": ["primary_source", "final_source", "url", "retrieved_at"],
+          "properties": {
+            "primary_source": { "type": ["string", "null"] },
+            "final_source": { "type": ["string", "null"] },
+            "url": { "type": ["string", "null"] },
+            "retrieved_at": { "type": "string" }
+          }
+        },
+        "quality": {
+          "type": "object",
+          "required": ["confidence", "data_complete", "missing_fields", "warnings"],
+          "properties": {
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+            "data_complete": { "type": "boolean" },
+            "missing_fields": { "type": "array", "items": { "type": "string" } },
+            "warnings": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "errors": { "type": "array", "items": { "$ref": "#/definitions/error" } },
+        "debug": { "type": "object" }
+      }
+    },
+    "shortResult": {
+      "type": "object",
+      "properties": {
+        "id": { "type": ["string", "null"] },
+        "number": { "type": "string" },
+        "type": { "type": "string" },
+        "current_status": { "type": ["string", "null"] },
+        "eta": { "type": ["string", "null"] },
+        "etd": { "type": ["string", "null"] },
+        "last_event_at": { "type": ["string", "null"] },
+        "source": { "type": ["string", "null"] },
+        "errors": { "type": "array", "items": { "$ref": "#/definitions/error" } }
+      }
+    }
+  }
+}

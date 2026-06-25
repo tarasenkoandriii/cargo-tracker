@@ -1,0 +1,151 @@
+{
+  "request_id": "tracking-check-2026-06-24-a1b2c3d4",
+  "checked_at": "2026-06-24T12:00:00.000Z",
+  "summary": { "total": 3, "success": 2, "failed": 1 },
+  "results": [
+    {
+      "input": { "id": "S001", "number": "080-38652331" },
+      "detected": {
+        "type": "air_awb",
+        "normalized_number": "080-38652331",
+        "carrier": { "name": null, "code": "080", "source": "prefix-table" }
+      },
+      "tracking": {
+        "current_status": "in_transit",
+        "raw_status": "Departed from origin",
+        "last_event": {
+          "event_code": "DEP",
+          "event_name": "Departed",
+          "location": "FRA",
+          "datetime": "2026-06-22T09:40:00",
+          "is_actual": true
+        },
+        "dates": {
+          "etd": "2026-06-22T08:00:00",
+          "eta": "2026-06-25T18:30:00",
+          "actual_departure": "2026-06-22T09:40:00",
+          "actual_arrival": null
+        },
+        "route": {
+          "origin": "FRA",
+          "destination": "JFK",
+          "transit_points": ["CDG"]
+        },
+        "events": [
+          {
+            "event_code": "RCS",
+            "event_name": "Received from shipper",
+            "normalized_status": "received",
+            "location": "FRA",
+            "datetime": "2026-06-21T14:10:00",
+            "raw_text": "RCS Received from shipper FRA"
+          },
+          {
+            "event_code": "DEP",
+            "event_name": "Departed",
+            "normalized_status": "departed",
+            "location": "FRA",
+            "datetime": "2026-06-22T09:40:00",
+            "raw_text": "DEP Departed FRA"
+          }
+        ],
+        "container_milestones": {}
+      },
+      "source": {
+        "primary_source": "demo",
+        "final_source": "demo",
+        "url": null,
+        "retrieved_at": "2026-06-24T12:00:00.000Z"
+      },
+      "quality": {
+        "confidence": 0.86,
+        "data_complete": false,
+        "missing_fields": ["actual_arrival"],
+        "warnings": ["demo_mode_synthetic_data"]
+      },
+      "errors": []
+    },
+    {
+      "input": { "id": "S004", "number": "MSKU1880987" },
+      "detected": {
+        "type": "sea_container",
+        "normalized_number": "MSKU1880987",
+        "carrier": { "name": "Maersk", "code": "MSK", "source": "owner-prefix" }
+      },
+      "tracking": {
+        "current_status": "not_found",
+        "raw_status": null,
+        "last_event": null,
+        "dates": {
+          "etd": null,
+          "eta": null,
+          "actual_departure": null,
+          "actual_arrival": null
+        },
+        "route": { "origin": null, "destination": null, "transit_points": [] },
+        "events": [],
+        "container_milestones": {}
+      },
+      "source": {
+        "primary_source": "demo",
+        "final_source": "demo",
+        "url": null,
+        "retrieved_at": "2026-06-24T12:00:00.000Z"
+      },
+      "quality": {
+        "confidence": 0.1,
+        "data_complete": false,
+        "missing_fields": ["tracking"],
+        "warnings": ["demo_mode_synthetic_data"]
+      },
+      "errors": [
+        {
+          "code": "NOT_FOUND",
+          "message": "No tracking information found for this number",
+          "source": "demo"
+        }
+      ]
+    },
+    {
+      "input": { "id": "S099", "number": "12345" },
+      "detected": {
+        "type": "unknown",
+        "normalized_number": null,
+        "carrier": null
+      },
+      "tracking": {
+        "current_status": null,
+        "raw_status": null,
+        "last_event": null,
+        "dates": {
+          "etd": null,
+          "eta": null,
+          "actual_departure": null,
+          "actual_arrival": null
+        },
+        "route": { "origin": null, "destination": null, "transit_points": [] },
+        "events": [],
+        "container_milestones": {}
+      },
+      "source": {
+        "primary_source": null,
+        "final_source": null,
+        "url": null,
+        "retrieved_at": "2026-06-24T12:00:00.000Z"
+      },
+      "quality": {
+        "confidence": 0.0,
+        "data_complete": false,
+        "missing_fields": ["tracking"],
+        "warnings": []
+      },
+      "errors": [
+        {
+          "code": "INVALID_FORMAT",
+          "message": "Number does not match AWB (NNN-NNNNNNNN) or container (AAAANNNNNNN) format",
+          "source": null
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "name": "cargo-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI tracking agent for air waybills (AWB) and sea containers — NestJS + React, Vercel Hobby ready.",
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "nest start --watch",
+    "dev:web": "vite --config web/vite.config.ts",
+    "build": "npm run build:server && npm run build:web && npm run copy:schema",
+    "build:server": "nest build",
+    "build:web": "vite build --config web/vite.config.ts",
+    "start": "node dist-server/main.js",
+    "preview": "vite preview --config web/vite.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test",
+    "copy:schema": "node scripts/copy-schema.cjs"
+  },
+  "dependencies": {
+    "@nestjs/common": "^10.4.4",
+    "@nestjs/core": "^10.4.4",
+    "@nestjs/platform-express": "^10.4.4",
+    "cheerio": "^1.0.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1",
+    "express": "^4.21.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^10.4.5",
+    "@nestjs/schematics": "^10.1.4",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.16.10",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.2",
+    "concurrently": "^9.0.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8",
+    "xlsx": "^0.18.5"
+  },
+  "engines": {
+    "node": ">=18.18"
+  }
+}

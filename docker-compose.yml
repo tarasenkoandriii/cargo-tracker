@@ -1,0 +1,16 @@
+services:
+  app:
+    build: .
+    container_name: cargo-tracker
+    ports:
+      - "5173:5173"   # web UI (Vite dev server) — open http://localhost:5173
+      - "3001:3001"   # NestJS API (proxied by Vite under /api)
+    environment:
+      - DEMO_MODE=true
+    # For live sources / API keys: copy .env.example -> .env and uncomment:
+    # env_file:
+    #   - .env
+    volumes:
+      - .:/app                # live source -> hot reload (NestJS watch + Vite HMR)
+      - /app/node_modules     # keep the image's node_modules (don't shadow with host)
+    command: npm run dev
