@@ -81,9 +81,11 @@ export const config = {
   /**
    * Minimum gap (ms) between consecutive CargoAI/RapidAPI requests *within one
    * key lane*. Each key runs its own queue, so this spaces only that key's calls.
-   * Higher = gentler on each key's per-second limit (at the cost of latency).
+   * Low (300ms) is fine when a rotating proxy (Webshare) gives a fresh IP per
+   * request and the load is split across two key lanes — the per-second limit is
+   * no longer the bottleneck. Raise if you run without a proxy and see 429s.
    */
-  cargoaiMinGapMs: int('CARGOAI_MIN_GAP_MS', 1500),
+  cargoaiMinGapMs: int('CARGOAI_MIN_GAP_MS', 300),
 
   /** Retries for transient network errors (ТЗ §11). */
   retries: int('RETRIES', 1),
