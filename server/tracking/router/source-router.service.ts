@@ -30,7 +30,7 @@ export class SourceRouter {
     if (demoMode) return [this.demo];
 
     const chain: Connector[] = [this.trackTrace];
-    if (type === ShipmentType.AIR && config.cargoaiApiKey) {
+    if (type === ShipmentType.AIR && (config.cargoaiApiKey || config.rapidapiKey)) {
       chain.push(this.cargoai);
     }
     chain.push(this.carrierWeb);

@@ -19,10 +19,13 @@ import { NormalizerService } from '../normalizer/normalizer.service';
 /**
  * CargoAI Track & Trace API connector for air cargo (ТЗ §5, §16).
  *
- * Used only when `CARGOAI_API_KEY` is configured (commercial access). Without
- * a key it returns a structured LOGIN_REQUIRED error rather than failing. The
- * request/response mapping below follows CargoAI's CargoCONNECT shape and is
- * the single place to adjust to the exact contract of your account.
+ * Two access modes, auto-selected at runtime:
+ *  - RapidAPI: if `RAPIDAPI_KEY` is set, auth uses x-rapidapi-key /
+ *    x-rapidapi-host headers (CargoAI distributes via RapidAPI);
+ *  - Direct: if `CARGOAI_API_KEY` is set, a Bearer token is used instead.
+ * With neither configured it returns a structured LOGIN_REQUIRED error rather
+ * than failing. The request/response mapping below follows CargoAI's
+ * CargoCONNECT shape and is the single place to adjust to your account.
  */
 @Injectable()
 export class CargoAiConnector implements Connector {
@@ -38,18 +41,36 @@ export class CargoAiConnector implements Connector {
     const r = emptyTrackResult();
     r.source_name = this.name;
 
-    if (!config.cargoaiApiKey) {
+    // Access mode: RapidAPI (x-rapidapi-key) takes precedence if configured,
+    // otherwise a direct Bearer key. Neither set → structured LOGIN_REQUIRED.
+    const useRapid = !!config.rapidapiKey;
+    const hasAuth = useRapid || !!config.cargoaiApiKey;
+
+    if (!hasAuth) {
       ctx.logger.add('query_cargoai', 'skipped', { reason: 'no_api_key' });
       r.error = {
         code: ErrorCode.LOGIN_REQUIRED,
-        message: 'CargoAI API key not configured (set CARGOAI_API_KEY).',
+        message:
+          'CargoAI not configured: set RAPIDAPI_KEY (RapidAPI access) or ' +
+          'CARGOAI_API_KEY (direct access).',
         source: this.name,
       };
       return r;
     }
 
+    const baseUrl =
+      config.cargoaiBaseUrl ||
+      (useRapid ? `https://${config.rapidapiHost}` : 'https://api.cargoai.co');
+
+    const authHeaders: Record<string, string> = useRapid
+      ? {
+          'x-rapidapi-key': config.rapidapiKey!,
+          'x-rapidapi-host': config.rapidapiHost,
+        }
+      : { authorization: `Bearer ${config.cargoaiApiKey}` };
+
     const [prefix, serial] = ctx.normalizedNumber.split('-');
-    const url = `${config.cargoaiBaseUrl}/tracking/v1/awb/${prefix}/${serial}`;
+    const url = `${baseUrl}/tracking/v1/awb/${prefix}/${serial}`;
     r.url = url;
 
     let data: any;
@@ -61,7 +82,7 @@ export class CargoAiConnector implements Connector {
             {
               headers: {
                 accept: 'application/json',
-                authorization: `Bearer ${config.cargoaiApiKey}`,
+                ...authHeaders,
               },
             },
             config.timeoutMs,
@@ -94,7 +115,7 @@ export class CargoAiConnector implements Connector {
       return r;
     }
 
-    ctx.logger.add('query_cargoai', 'success', {});
+    ctx.logger.add('query_cargoai', 'success', { mode: useRapid ? 'rapidapi' : 'direct' });
     return this.map(data, ctx, r);
   }
 

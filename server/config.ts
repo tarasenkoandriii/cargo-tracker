@@ -36,7 +36,18 @@ export const config = {
 
   /** Optional CargoAI commercial API key for air cargo (ТЗ §5, §16). */
   cargoaiApiKey: process.env.CARGOAI_API_KEY || null,
-  cargoaiBaseUrl: process.env.CARGOAI_BASE_URL || 'https://api.cargoai.co',
+  /** Explicit base URL override; if unset it is derived per access mode. */
+  cargoaiBaseUrl: process.env.CARGOAI_BASE_URL || null,
+
+  /**
+   * RapidAPI access mode for CargoAI. CargoAI distributes its Track & Trace
+   * API via RapidAPI, where auth uses x-rapidapi-key / x-rapidapi-host headers
+   * instead of a direct Bearer token. If RAPIDAPI_KEY is set, the connector
+   * switches to this mode automatically.
+   */
+  rapidapiKey: process.env.RAPIDAPI_KEY || null,
+  rapidapiHost:
+    process.env.RAPIDAPI_HOST || 'air-cargo-co2-track-and-trace.p.rapidapi.com',
 
   /**
    * Optional Grok (xAI) key for AI-assisted parsing fallback (ТЗ §10.1).

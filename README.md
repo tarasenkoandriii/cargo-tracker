@@ -124,8 +124,10 @@ docker run --rm -p 5173:5173 -p 3001:3001 cargo-tracker
 | `TIMEOUT_MS`           | `9000`                | таймаут на джерело                              |
 | `RETRIES`              | `1`                   | кількість повторів на джерело                   |
 | `RATE_LIMIT_DELAY_MS`  | `600`                 | пауза між запитами (rate limiting)              |
-| `CARGOAI_API_KEY`      | —                     | ключ CargoAI API (авіа); без нього конектор віддає `LOGIN_REQUIRED` |
-| `CARGOAI_BASE_URL`     | (офіц. URL)           | базовий URL CargoAI                             |
+| `RAPIDAPI_KEY`         | —                     | ключ CargoAI через RapidAPI; вмикає режим `x-rapidapi-key` (пріоритетний) |
+| `RAPIDAPI_HOST`        | (хост CargoAI на RapidAPI) | хост RapidAPI для CargoAI                  |
+| `CARGOAI_API_KEY`      | —                     | прямий ключ CargoAI (Bearer); без RapidAPI/прямого ключа конектор віддає `LOGIN_REQUIRED` |
+| `CARGOAI_BASE_URL`     | (залежить від режиму)  | необов'язковий override базового URL CargoAI    |
 | `XAI_API_KEY`          | —                     | ключ Grok (xAI) для AI-парсингу-фолбеку (опц., §10.1); приймається й `GROK_API_KEY` |
 | `XAI_BASE_URL`         | `https://api.x.ai/v1` | базовий URL xAI (OpenAI-сумісний)               |
 | `GROK_MODEL`           | `grok-4.3`            | модель Grok                                      |
