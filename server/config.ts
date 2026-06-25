@@ -86,7 +86,7 @@ export const config = {
    * request and the load is split across two key lanes — the per-second limit is
    * no longer the bottleneck. Raise if you run without a proxy and see 429s.
    */
-  cargoaiMinGapMs: int('CARGOAI_MIN_GAP_MS', 900),
+  cargoaiMinGapMs: int('CARGOAI_MIN_GAP_MS', 1080),
 
   /** Retries for transient network errors (ТЗ §11). */
   retries: int('RETRIES', 1),
