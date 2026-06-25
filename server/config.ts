@@ -55,11 +55,11 @@ export const config = {
   cargoaiRetries: int('CARGOAI_RETRIES', 2),
 
   /**
-   * Minimum gap (ms) between consecutive CargoAI/RapidAPI requests, to soften
-   * per-second 429 bursts when air numbers run concurrently. With a fallback key
-   * configured we can afford a shorter gap (failures roll over to the 2nd key).
+   * Minimum gap (ms) between consecutive CargoAI/RapidAPI requests *within one
+   * key lane*. Each key runs its own queue, so this spaces only that key's calls.
+   * Higher = gentler on each key's per-second limit (at the cost of latency).
    */
-  cargoaiMinGapMs: int('CARGOAI_MIN_GAP_MS', 750),
+  cargoaiMinGapMs: int('CARGOAI_MIN_GAP_MS', 1500),
 
   /** Retries for transient network errors (ТЗ §11). */
   retries: int('RETRIES', 1),

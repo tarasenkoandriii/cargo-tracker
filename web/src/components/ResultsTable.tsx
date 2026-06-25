@@ -4,7 +4,15 @@ import { statusInfo, typeInfo, fmtDate } from '../status';
 import { ShipmentDetail } from './ShipmentDetail';
 import { exportJson, exportCsv, exportXlsx } from '../export';
 
-export function ResultsTable({ data }: { data: TrackResponse }) {
+export function ResultsTable({
+  data,
+  onRetry,
+  retrying,
+}: {
+  data: TrackResponse;
+  onRetry?: (index: number) => void;
+  retrying?: Set<number>;
+}) {
   const [open, setOpen] = useState<number | null>(null);
 
   if (!data.results.length) {
@@ -51,8 +59,11 @@ export function ResultsTable({ data }: { data: TrackResponse }) {
             <Row
               key={i}
               r={r}
+              index={i}
               isOpen={open === i}
               onToggle={() => setOpen(open === i ? null : i)}
+              onRetry={onRetry}
+              isRetrying={!!retrying?.has(i)}
             />
           ))}
         </tbody>
@@ -63,12 +74,18 @@ export function ResultsTable({ data }: { data: TrackResponse }) {
 
 function Row({
   r,
+  index,
   isOpen,
   onToggle,
+  onRetry,
+  isRetrying,
 }: {
   r: ShipmentResult;
+  index: number;
   isOpen: boolean;
   onToggle: () => void;
+  onRetry?: (index: number) => void;
+  isRetrying?: boolean;
 }) {
   const st = statusInfo(r.tracking.current_status);
   const ty = typeInfo(r.detected.type);
@@ -98,7 +115,23 @@ function Row({
         <td className="mono">{last ? fmtDate(last.datetime) : '—'}</td>
         <td>
           {hasError ? (
-            <span className="pill bad">{r.errors[0].code}</span>
+            onRetry ? (
+              <button
+                type="button"
+                className="pill bad retry"
+                title="Повторити запит для цього номера"
+                disabled={isRetrying}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRetry(index);
+                }}
+              >
+                <span className="retry-glyph">{isRetrying ? '⟳' : '↻'}</span>
+                {isRetrying ? 'Повтор…' : r.errors[0].code}
+              </button>
+            ) : (
+              <span className="pill bad">{r.errors[0].code}</span>
+            )
           ) : (
             r.source.final_source ?? '—'
           )}

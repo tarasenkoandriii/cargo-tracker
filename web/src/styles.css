@@ -462,6 +462,41 @@ table.manifest tbody tr.open {
   color: var(--red);
   border-color: #ecc4c4;
 }
+/* Error pill rendered as an interactive retry button. */
+button.pill.bad.retry {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+button.pill.bad.retry:hover:not(:disabled) {
+  background: #f7dada;
+  border-color: #e0a8a8;
+}
+button.pill.bad.retry:active:not(:disabled) {
+  background: #f1cccc;
+}
+button.pill.bad.retry:disabled {
+  cursor: progress;
+  opacity: 0.75;
+}
+.retry-glyph {
+  display: inline-block;
+  font-size: 12px;
+  line-height: 1;
+}
+button.pill.bad.retry:disabled .retry-glyph {
+  animation: retry-spin 0.8s linear infinite;
+}
+@keyframes retry-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 .pill.dot::before {
   content: '';
   display: inline-block;
