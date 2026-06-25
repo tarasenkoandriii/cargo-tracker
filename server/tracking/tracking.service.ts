@@ -39,10 +39,20 @@ export class TrackingService {
     const results: Record<string, unknown>[] = [];
     const resultsShort: Record<string, unknown>[] = [];
 
-    // Sequential processing keeps us within serverless limits and avoids
-    // aggressive parallel requests to external sources (ТЗ §11).
-    for (const input of shipments) {
-      const full = await this.trackOne(input, demoMode, !!opts.debug);
+    // Bounded-concurrency processing. Sequential lookups blow past the
+    // serverless duration limit once there are several slow live sources
+    // (each up to TIMEOUT_MS), which is what caused FUNCTION_INVOCATION_TIMEOUT
+    // on Vercel. We run up to `concurrency` numbers at once while preserving
+    // input order. Demo mode is instant, so it runs all at once.
+    const limit = demoMode
+      ? shipments.length || 1
+      : Math.max(1, config.concurrency);
+
+    const fulls = await this.mapWithConcurrency(shipments, limit, (input) =>
+      this.trackOne(input, demoMode, !!opts.debug),
+    );
+
+    for (const full of fulls) {
       results.push(full);
       if (opts.shortFormat) resultsShort.push(this.builder.buildShort(full));
     }
@@ -56,6 +66,28 @@ export class TrackingService {
     };
     if (opts.shortFormat) response.results_short = resultsShort;
     return response;
+  }
+
+  /**
+   * Runs `fn` over `items` with at most `limit` in flight, preserving the
+   * original order in the returned array. Each item is processed independently;
+   * `fn` itself never throws (trackOne is fully guarded).
+   */
+  private async mapWithConcurrency<T, R>(
+    items: T[],
+    limit: number,
+    fn: (item: T, index: number) => Promise<R>,
+  ): Promise<R[]> {
+    const out: R[] = new Array(items.length);
+    let next = 0;
+    const workerCount = Math.min(Math.max(1, limit), items.length || 1);
+    const workers = Array.from({ length: workerCount }, async () => {
+      for (let i = next++; i < items.length; i = next++) {
+        out[i] = await fn(items[i], i);
+      }
+    });
+    await Promise.all(workers);
+    return out;
   }
 
   /** Process a single number. Never throws — one bad number can't stop the run (ТЗ §9). */

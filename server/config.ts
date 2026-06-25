@@ -26,7 +26,14 @@ export const config = {
   demoMode: bool('DEMO_MODE', true),
 
   /** Per-source/per-number timeout (ms). Kept short to fit serverless limits. */
-  timeoutMs: int('TIMEOUT_MS', 9000),
+  timeoutMs: int('TIMEOUT_MS', 8000),
+
+  /**
+   * Max numbers processed concurrently in one request. Sequential processing
+   * of many slow live sources exceeds the serverless duration limit, so we
+   * fan out. Keep modest to stay polite to external sources (ТЗ §11).
+   */
+  concurrency: int('CONCURRENCY', 4),
 
   /** Retries for transient network errors (ТЗ §11). */
   retries: int('RETRIES', 1),
