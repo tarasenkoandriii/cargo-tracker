@@ -29,11 +29,12 @@ export const config = {
   timeoutMs: int('TIMEOUT_MS', 8000),
 
   /**
-   * Max numbers processed concurrently in one request. Sequential processing
-   * of many slow live sources exceeds the serverless duration limit, so we
-   * fan out. Keep modest to stay polite to external sources (ТЗ §11).
+   * Max numbers processed concurrently in one request. With per-source retries
+   * and 15s timeouts, a 10-number batch must fit the 60s function budget, so we
+   * default high enough that the standard batch runs in a single wave (one
+   * number per worker). Lower it if you hit external rate limits.
    */
-  concurrency: int('CONCURRENCY', 4),
+  concurrency: int('CONCURRENCY', 10),
 
   /**
    * Sea (Pier2Pier) is slower and primes cookies across requests, plus it can
@@ -48,9 +49,10 @@ export const config = {
    * CargoAI does a near-real-time pull and can return large payloads, so an
    * 8s timeout sometimes isn't enough (the call then falls through to a
    * fallback and shows SOURCE_UNAVAILABLE even though data exists). Give air
-   * a longer dedicated timeout.
+   * a longer dedicated timeout and a couple of retries for flaky pulls.
    */
   cargoaiTimeoutMs: int('CARGOAI_TIMEOUT_MS', 15000),
+  cargoaiRetries: int('CARGOAI_RETRIES', 2),
 
   /** Retries for transient network errors (ТЗ §11). */
   retries: int('RETRIES', 1),
