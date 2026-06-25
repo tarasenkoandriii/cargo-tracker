@@ -12,7 +12,7 @@ import {
   Connector,
   TrackContext,
   fetchWithTimeout,
-  retry,
+  sleep,
   TimeoutError,
 } from './connector.interface';
 import { NormalizerService } from '../normalizer/normalizer.service';
@@ -75,35 +75,46 @@ export class CargoAiConnector implements Connector {
     r.url = url;
 
     let data: any;
-    try {
-      data = await retry(
-        async () => {
-          const res = await fetchWithTimeout(
-            url,
-            {
-              headers: {
-                accept: 'application/json',
-                ...authHeaders,
-              },
-            },
-            config.cargoaiTimeoutMs,
-          );
-          if (res.status === 401 || res.status === 403) {
-            const e: any = new Error('unauthorized');
-            e.code = ErrorCode.LOGIN_REQUIRED;
-            throw e;
-          }
-          if (res.status === 404) {
-            const e: any = new Error('not found');
-            e.code = ErrorCode.NOT_FOUND;
-            throw e;
-          }
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.json();
-        },
-        config.retries,
-        config.rateLimitDelayMs,
+    const doFetch = async () => {
+      const res = await fetchWithTimeout(
+        url,
+        { headers: { accept: 'application/json', ...authHeaders } },
+        config.cargoaiTimeoutMs,
       );
+      if (res.status === 401 || res.status === 403) {
+        const e: any = new Error('unauthorized');
+        e.code = ErrorCode.LOGIN_REQUIRED;
+        e.fatal = true; // definitive — don't retry
+        throw e;
+      }
+      if (res.status === 404) {
+        const e: any = new Error('not found');
+        e.code = ErrorCode.NOT_FOUND;
+        e.fatal = true; // definitive — don't retry
+        throw e;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    };
+
+    try {
+      // Retry on TIMEOUT and transient errors (a 2nd CargoAI pull often hits a
+      // warmed cache and succeeds), but bail immediately on definitive errors.
+      const total = 1 + Math.max(0, config.cargoaiRetries);
+      let lastErr: any;
+      for (let i = 0; i < total; i++) {
+        try {
+          data = await doFetch();
+          lastErr = undefined;
+          break;
+        } catch (err: any) {
+          lastErr = err;
+          if (err?.fatal || i === total - 1) break;
+          ctx.logger.add('query_cargoai', 'info', { event: 'retry', attempt: i + 1 });
+          await sleep(config.rateLimitDelayMs + 300 * i);
+        }
+      }
+      if (lastErr) throw lastErr;
     } catch (err: any) {
       ctx.logger.add('query_cargoai', 'error', { reason: String(err?.message ?? err) });
       r.error = {
