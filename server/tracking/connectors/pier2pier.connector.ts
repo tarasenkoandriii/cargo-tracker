@@ -433,7 +433,7 @@ export class Pier2PierConnector implements Connector {
     r.destination = details['PORT OF DISCHARGE'] || details['SHIPPED TO'] || null;
 
     // ETA from the explicit "Estimated Time of Arrival" step (a future row).
-    const etaStep = events.find((e) => /estimat.*arriv/i.test(e.event_name));
+    const etaStep = events.find((e) => /estimat.*arriv/i.test(e.event_name ?? ''));
     if (etaStep) r.eta = etaStep.datetime;
 
     // Container type from the container card (x-text="container.ContainerType").
