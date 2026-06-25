@@ -53,12 +53,13 @@ export const config = {
   timeoutMs: int('TIMEOUT_MS', 8000),
 
   /**
-   * Max numbers processed concurrently in one request. Kept modest: firing many
-   * air numbers at once trips CargoAI/RapidAPI's request-rate limit (429) and
-   * makes results WORSE, not better. This also stays within the serverless
-   * duration budget. Raise only if your data plan allows higher QPS.
+   * Max numbers processed concurrently in one request. With a rotating proxy
+   * (fresh IP per request) and air load split across two key lanes, the old
+   * per-second 429 burst is no longer the bottleneck, so this can run high (12)
+   * to process all numbers at once. The per-lane gap (cargoaiMinGapMs) still
+   * paces each key. Lower if you run without a proxy and see 429s.
    */
-  concurrency: int('CONCURRENCY', 4),
+  concurrency: int('CONCURRENCY', 12),
 
   /**
    * Sea (Pier2Pier) is slower and primes cookies across requests, plus it can
