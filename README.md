@@ -126,8 +126,9 @@ docker run --rm -p 5173:5173 -p 3001:3001 cargo-tracker
 | `RATE_LIMIT_DELAY_MS`  | `600`                 | пауза між запитами (rate limiting)              |
 | `CARGOAI_API_KEY`      | —                     | ключ CargoAI API (авіа); без нього конектор віддає `LOGIN_REQUIRED` |
 | `CARGOAI_BASE_URL`     | (офіц. URL)           | базовий URL CargoAI                             |
-| `LLM_API_KEY`          | —                     | ключ LLM для парсингу-фолбеку (опц., §10.1)     |
-| `LLM_MODEL`            | `claude-sonnet-4-6`   | модель LLM                                       |
+| `XAI_API_KEY`          | —                     | ключ Grok (xAI) для AI-парсингу-фолбеку (опц., §10.1); приймається й `GROK_API_KEY` |
+| `XAI_BASE_URL`         | `https://api.x.ai/v1` | базовий URL xAI (OpenAI-сумісний)               |
+| `GROK_MODEL`           | `grok-4.3`            | модель Grok                                      |
 | `PORT`                 | `3001`                | порт локального бекенду                          |
 
 > Жоден номер не «зашитий» у код (§13.13). DEMO-конектор генерує дані як
@@ -149,7 +150,7 @@ Input Parser → Detector → Source Router → Connector(s) → Parser
 | Detector | `server/tracking/detector/` | тип номера (air_awb / sea_container / unknown), нормалізація, ISO 6346 check-digit, визначення перевізника за довідником |
 | Source Router | `server/tracking/router/source-router.service.ts` | вибір конекторів за типом і режимом (demo/live) |
 | Connectors | `server/tracking/connectors/` | demo, track-trace.com, CargoAI, шаблон сайту перевізника |
-| Parsers | `server/tracking/parsers/` | евристичний парсер тексту + опційний AI-парсер (фолбек) |
+| Parsers | `server/tracking/parsers/` | евристичний парсер тексту + опційний AI-парсер на Grok (xAI) як фолбек |
 | Normalizer | `server/tracking/normalizer/` | сирий статус → нормалізований словник (§7) |
 | Builder | `server/tracking/builder/response.builder.ts` | повний і короткий формати відповіді (§8, §8.1), оцінка quality/confidence |
 | Logger | `server/tracking/logger.ts` | покроковий debug-лог (§12) |
@@ -186,7 +187,7 @@ Input Parser → Detector → Source Router → Connector(s) → Parser
   одразу демонстрував усі три сценарії.
 - ISO 6346 контрольна цифра: при розбіжності номер не відхиляється, а
   позначається попередженням (`warnings`), як вимагає ТЗ.
-- AI ніколи не вигадує статуси/дати — лише структурує вже отриманий текст
+- Grok ніколи не вигадує статуси/дати — лише структурує вже отриманий текст
   (§10.1).
 
 ---

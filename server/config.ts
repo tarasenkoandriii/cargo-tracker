@@ -38,9 +38,15 @@ export const config = {
   cargoaiApiKey: process.env.CARGOAI_API_KEY || null,
   cargoaiBaseUrl: process.env.CARGOAI_BASE_URL || 'https://api.cargoai.co',
 
-  /** Optional LLM key for AI-assisted parsing fallback (ТЗ §10.1). */
-  llmApiKey: process.env.LLM_API_KEY || null,
-  llmModel: process.env.LLM_MODEL || 'claude-sonnet-4-6',
+  /**
+   * Optional Grok (xAI) key for AI-assisted parsing fallback (ТЗ §10.1).
+   * The xAI API is OpenAI-compatible: POST {baseUrl}/chat/completions with a
+   * Bearer token. Accepts XAI_API_KEY (official) or GROK_API_KEY (alias).
+   * If unset, the pipeline transparently falls back to deterministic parsing.
+   */
+  grokApiKey: process.env.XAI_API_KEY || process.env.GROK_API_KEY || null,
+  grokBaseUrl: process.env.XAI_BASE_URL || 'https://api.x.ai/v1',
+  grokModel: process.env.GROK_MODEL || 'grok-4.3',
 
   /** track-trace.com endpoints (ТЗ §5, §16). */
   trackTraceAir: 'https://www.track-trace.com/aircargo',
