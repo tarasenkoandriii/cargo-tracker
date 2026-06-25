@@ -18,23 +18,32 @@ import {
 import { NormalizerService } from '../normalizer/normalizer.service';
 
 /**
- * Module-level pacing gate for CargoAI/RapidAPI. Serializes only the *start* of
- * each outgoing request so consecutive calls are spaced >= cargoaiMinGapMs apart,
- * preventing 429 bursts when many air numbers run concurrently. The gate is
- * per-invocation (serverless isolates invocations), so it paces within a single
- * batch and resets afterwards. It does not serialize the requests themselves —
- * once started, they still run in parallel.
+ * Per-lane pacing gates for CargoAI/RapidAPI. We run ONE independent queue per
+ * API key: each lane spaces the *start* of its own calls >= cargoaiMinGapMs
+ * apart, so the two key lanes run in parallel and each key only sees ~half the
+ * traffic (no per-second 429 burst on either). Gates are per-invocation
+ * (serverless isolates invocations): they pace within a single batch and reset
+ * afterwards. They do not serialize the requests themselves — once started, the
+ * requests still run concurrently.
  */
-let cargoGate: Promise<void> = Promise.resolve();
-let cargoLastStart = 0;
-function acquireCargoSlot(minGapMs: number): Promise<void> {
-  cargoGate = cargoGate.then(async () => {
-    const wait = Math.max(0, cargoLastStart + minGapMs - Date.now());
+const cargoLanes: Array<{ gate: Promise<void>; last: number }> = [];
+function acquireCargoSlot(lane: number, minGapMs: number): Promise<void> {
+  if (!cargoLanes[lane]) cargoLanes[lane] = { gate: Promise.resolve(), last: 0 };
+  const L = cargoLanes[lane];
+  L.gate = L.gate.then(async () => {
+    const wait = Math.max(0, L.last + minGapMs - Date.now());
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-    cargoLastStart = Date.now();
+    L.last = Date.now();
   });
-  return cargoGate;
+  return L.gate;
 }
+
+/**
+ * Round-robin counter to split air numbers across keys: even calls -> key 0,
+ * odd calls -> key 1, etc. Per-invocation; resets between batches.
+ */
+let cargoKeyRR = 0;
+
 
 /**
  * CargoAI Track & Trace API connector for air cargo (ТЗ §5, §16).
@@ -82,17 +91,16 @@ export class CargoAiConnector implements Connector {
       config.cargoaiBaseUrl ||
       (useRapid ? `https://${config.rapidapiHost}` : 'https://api.cargoai.co');
 
-    // Ordered credential sets to try. For RapidAPI we can roll over to a second
-    // key (= a second quota) when the first is exhausted/blocked (429 / quota).
+    // Build the available key lanes. Each lane = one API key with its own queue.
     const keySets: Array<{ label: string; headers: Record<string, string> }> = [];
     if (useRapid) {
       keySets.push({
-        label: 'primary',
+        label: 'key0',
         headers: { 'x-rapidapi-key': config.rapidapiKey!, 'x-rapidapi-host': config.rapidapiHost },
       });
       if (config.rapidapiKeyFallback) {
         keySets.push({
-          label: 'fallback',
+          label: 'key1',
           headers: {
             'x-rapidapi-key': config.rapidapiKeyFallback,
             'x-rapidapi-host': config.rapidapiHost,
@@ -102,6 +110,12 @@ export class CargoAiConnector implements Connector {
     } else {
       keySets.push({ label: 'direct', headers: { authorization: `Bearer ${config.cargoaiApiKey}` } });
     }
+
+    // Split air numbers across keys round-robin (even -> key0, odd -> key1, …).
+    // Each key runs its own independent queue, so the keys work in parallel and
+    // each only sees ~half the traffic (no per-second 429 burst, no rollover).
+    const laneIdx = (cargoKeyRR++ % keySets.length + keySets.length) % keySets.length;
+    const lane = keySets[laneIdx];
 
     // Real CargoAI endpoint: GET /track?awb=NNN-NNNNNNNN (RapidAPI & direct).
     const url = `${baseUrl}/track?awb=${encodeURIComponent(ctx.normalizedNumber)}`;
@@ -117,97 +131,63 @@ export class CargoAiConnector implements Connector {
       if (res.status === 401 || res.status === 403) {
         const e: any = new Error('unauthorized');
         e.code = ErrorCode.LOGIN_REQUIRED;
-        e.unauthorized = true; // bad key for this set — try the next key
+        e.unauthorized = true;
         throw e;
       }
       if (res.status === 404) {
         const e: any = new Error('not found');
         e.code = ErrorCode.NOT_FOUND;
-        e.notFound = true; // definitive across all keys
+        e.notFound = true;
         throw e;
       }
       if (res.status === 429) {
         const e: any = new Error('rate limited');
         e.code = ErrorCode.SOURCE_UNAVAILABLE;
-        e.rateLimited = true; // quota/rate — roll over to the next key
+        e.rateLimited = true;
         throw e;
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     };
 
-    // Robust timeout check (don't rely on a single class identity surviving the
-    // serverless bundle): treat AbortError / TimeoutError by name too.
     const isTimeout = (e: any) =>
       e instanceof TimeoutError || e?.name === 'TimeoutError' || e?.name === 'AbortError';
 
     try {
+      // One assigned key, no cross-key fallback. Retry the SAME key on transient
+      // errors only (not timeout / bad key / 404). Pacing runs on this key's lane.
+      const attempts = 1 + Math.max(0, config.cargoaiRetries);
+      let keyErr: any;
       let succeeded = false;
-      let lastErr: any;
-
-      // Try each key set in turn. KEY POINT: when a fallback key is available we
-      // fail over IMMEDIATELY on *any* non-definitive error (429 / timeout /
-      // network / 5xx) — an exhausted-or-throttled primary key may 429 *or* hang,
-      // and the fresh fallback key (separate quota) usually answers fast (curl:
-      // ~1.5s). So non-final keys get a single, time-bounded attempt; only the
-      // final key spends retries on transient errors. This guarantees the working
-      // fallback is reached quickly instead of burning the budget on a dead key.
-      for (let k = 0; k < keySets.length && !succeeded; k++) {
-        const { label, headers } = keySets[k];
-        const moreKeys = k < keySets.length - 1;
-
-        const attempts = moreKeys ? 1 : 1 + Math.max(0, config.cargoaiRetries);
-        // Shorter timeout on non-final keys so a hanging primary doesn't eat the
-        // function's time budget before we ever reach the fallback.
-        const timeoutMs = moreKeys
-          ? Math.min(config.cargoaiTimeoutMs, 8000)
-          : config.cargoaiTimeoutMs;
-
-        let keyErr: any;
-        for (let i = 0; i < attempts; i++) {
-          // Pace the START of every CargoAI call (incl. retries / fallback) so
-          // concurrent air numbers don't hit the per-second rate limit at once.
-          await acquireCargoSlot(config.cargoaiMinGapMs);
-          try {
-            data = await doFetch(headers, timeoutMs);
-            keyErr = undefined;
-            succeeded = true;
-            break;
-          } catch (err: any) {
-            keyErr = err;
-            if (err?.notFound) throw err; // definitive — no key will find it
-            // Retry only on the final key, only for transient errors, only if
-            // attempts remain. With a fallback available we never retry here.
-            const retrySameKey =
-              !moreKeys && !isTimeout(err) && !err?.unauthorized && i < attempts - 1;
-            if (!retrySameKey) break;
-            ctx.logger.add('query_cargoai', 'info', {
-              event: 'retry',
-              key: label,
-              attempt: i + 1,
-              rateLimited: !!err?.rateLimited,
-            });
-            const base = err?.rateLimited ? config.rateLimitDelayMs * 3 : config.rateLimitDelayMs;
-            await sleep(base + 300 * i);
-          }
-        }
-
-        if (succeeded) break;
-        lastErr = keyErr;
-        // Roll over to the next key on ANY non-definitive error, including
-        // timeout: a throttled primary can be slow while a fresh key is fast.
-        if (moreKeys) {
+      for (let i = 0; i < attempts; i++) {
+        await acquireCargoSlot(laneIdx, config.cargoaiMinGapMs);
+        try {
+          data = await doFetch(lane.headers, config.cargoaiTimeoutMs);
+          keyErr = undefined;
+          succeeded = true;
+          break;
+        } catch (err: any) {
+          keyErr = err;
+          if (err?.notFound) throw err;
+          const retry = !isTimeout(err) && !err?.unauthorized && i < attempts - 1;
+          if (!retry) break;
           ctx.logger.add('query_cargoai', 'info', {
-            event: 'key_fallback',
-            from: label,
-            reason: String(keyErr?.code ?? keyErr?.message ?? keyErr),
+            event: 'retry',
+            key: lane.label,
+            attempt: i + 1,
+            rateLimited: !!err?.rateLimited,
           });
+          const base = err?.rateLimited ? config.rateLimitDelayMs * 3 : config.rateLimitDelayMs;
+          await sleep(base + 300 * i);
         }
       }
 
-      if (!succeeded) throw lastErr ?? new Error('CargoAI request failed');
+      if (!succeeded) throw keyErr ?? new Error('CargoAI request failed');
     } catch (err: any) {
-      ctx.logger.add('query_cargoai', 'error', { reason: String(err?.message ?? err) });
+      ctx.logger.add('query_cargoai', 'error', {
+        reason: String(err?.message ?? err),
+        key: lane.label,
+      });
       r.error = {
         code:
           err?.code ??
@@ -218,7 +198,10 @@ export class CargoAiConnector implements Connector {
       return r;
     }
 
-    ctx.logger.add('query_cargoai', 'success', { mode: useRapid ? 'rapidapi' : 'direct' });
+    ctx.logger.add('query_cargoai', 'success', {
+      mode: useRapid ? 'rapidapi' : 'direct',
+      key: lane.label,
+    });
     return this.map(data, ctx, r);
   }
 
