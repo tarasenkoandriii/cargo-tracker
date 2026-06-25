@@ -6,6 +6,7 @@ import { TrackingService } from './tracking.service';
 import { TrackRequestDto } from './dto/track-request.dto';
 import { parseCsv } from './csv.util';
 import { ShipmentInput, ShipmentType } from './models';
+import { config } from '../config';
 
 class CsvRequestDto {
   @IsString()
@@ -30,7 +31,26 @@ export class TrackingController {
 
   @Get('health')
   health() {
-    return { status: 'ok', service: 'cargo-tracker', time: new Date().toISOString() };
+    // Runtime diagnostics: which optional credentials/knobs are actually loaded
+    // in THIS deployment. Booleans only — secret values are never exposed. Lets
+    // you verify (e.g.) that RAPID_API_KEY_FALLBACK reached runtime after a
+    // redeploy, without guessing.
+    return {
+      status: 'ok',
+      service: 'cargo-tracker',
+      time: new Date().toISOString(),
+      config: {
+        demoMode: config.demoMode,
+        rapidapiKey: !!config.rapidapiKey,
+        rapidapiKeyFallback: !!config.rapidapiKeyFallback,
+        cargoaiApiKey: !!config.cargoaiApiKey,
+        grokApiKey: !!config.grokApiKey,
+        cargoaiMinGapMs: config.cargoaiMinGapMs,
+        cargoaiTimeoutMs: config.cargoaiTimeoutMs,
+        cargoaiRetries: config.cargoaiRetries,
+        concurrency: config.concurrency,
+      },
+    };
   }
 
   @Post('track')
