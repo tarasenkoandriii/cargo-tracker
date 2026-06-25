@@ -127,7 +127,7 @@ docker run --rm -p 5173:5173 -p 3001:3001 cargo-tracker
 | `SEA_RETRIES`          | `2`                   | повтори для Pier2Pier (переви­користовує cookie jar) |
 | `CARGOAI_TIMEOUT_MS`   | `15000`               | таймаут для CargoAI (великі відповіді, повільний pull) |
 | `CARGOAI_RETRIES`      | `2`                   | повтори CargoAI для нестабільних запитів |
-| `CARGOAI_MIN_GAP_MS`   | `300`                 | пауза в межах однієї черги-ключа CargoAI (низька — бо проксі ротує IP) |
+| `CARGOAI_MIN_GAP_MS`   | `900`                 | пауза в межах однієї черги-ключа CargoAI (анти-429 per-sec) |
 | `RAPID_API_KEY_FALLBACK`| —                    | 2-й ключ RapidAPI (2-га квота): друга черга — авіа-номери діляться парне/непарне між ключами (аліас: `RAPIDAPI_KEY_FALLBACK`) |
 | `CARGOAI_PROXY_URL`    | —                     | проксі лише для CargoAI/RapidAPI (підозра на IP-фільтр); `http://user:pass@host:port`; не обходить per-key ліміт |
 | `WEBSHARE_PROXY_USERNAME` / `_PASSWORD` | — | зручний спосіб задати Webshare-проксі: connector сам збере backbone-URL `p.webshare.io` з `-rotate` (новий IP на запит). Опц.: `_COUNTRY`, `_PORT`, `_ROTATE` |
