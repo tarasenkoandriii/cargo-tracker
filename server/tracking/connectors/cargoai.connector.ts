@@ -82,40 +82,54 @@ export class CargoAiConnector implements Connector {
       config.cargoaiBaseUrl ||
       (useRapid ? `https://${config.rapidapiHost}` : 'https://api.cargoai.co');
 
-    const authHeaders: Record<string, string> = useRapid
-      ? {
-          'x-rapidapi-key': config.rapidapiKey!,
-          'x-rapidapi-host': config.rapidapiHost,
-        }
-      : { authorization: `Bearer ${config.cargoaiApiKey}` };
+    // Ordered credential sets to try. For RapidAPI we can roll over to a second
+    // key (= a second quota) when the first is exhausted/blocked (429 / quota).
+    const keySets: Array<{ label: string; headers: Record<string, string> }> = [];
+    if (useRapid) {
+      keySets.push({
+        label: 'primary',
+        headers: { 'x-rapidapi-key': config.rapidapiKey!, 'x-rapidapi-host': config.rapidapiHost },
+      });
+      if (config.rapidapiKeyFallback) {
+        keySets.push({
+          label: 'fallback',
+          headers: {
+            'x-rapidapi-key': config.rapidapiKeyFallback,
+            'x-rapidapi-host': config.rapidapiHost,
+          },
+        });
+      }
+    } else {
+      keySets.push({ label: 'direct', headers: { authorization: `Bearer ${config.cargoaiApiKey}` } });
+    }
 
     // Real CargoAI endpoint: GET /track?awb=NNN-NNNNNNNN (RapidAPI & direct).
     const url = `${baseUrl}/track?awb=${encodeURIComponent(ctx.normalizedNumber)}`;
     r.url = url;
 
     let data: any;
-    const doFetch = async () => {
+    const doFetch = async (headers: Record<string, string>) => {
       const res = await fetchWithTimeout(
         url,
-        { headers: { accept: 'application/json', ...authHeaders } },
+        { headers: { accept: 'application/json', ...headers } },
         config.cargoaiTimeoutMs,
       );
       if (res.status === 401 || res.status === 403) {
         const e: any = new Error('unauthorized');
         e.code = ErrorCode.LOGIN_REQUIRED;
-        e.fatal = true; // definitive — don't retry
+        e.unauthorized = true; // bad key for this set — try the next key
         throw e;
       }
       if (res.status === 404) {
         const e: any = new Error('not found');
         e.code = ErrorCode.NOT_FOUND;
-        e.fatal = true; // definitive — don't retry
+        e.notFound = true; // definitive across all keys
         throw e;
       }
       if (res.status === 429) {
         const e: any = new Error('rate limited');
         e.code = ErrorCode.SOURCE_UNAVAILABLE;
-        e.rateLimited = true; // retry, but with a longer backoff
+        e.rateLimited = true; // quota/rate — roll over to the next key
         throw e;
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -123,36 +137,57 @@ export class CargoAiConnector implements Connector {
     };
 
     try {
-      // Space out the start of CargoAI calls so concurrent air numbers don't
-      // all hit RapidAPI's rate limit at once (429).
-      await acquireCargoSlot(config.cargoaiMinGapMs);
-
-      // Retry transient errors and rate-limits (429) with backoff. Do NOT retry
-      // timeouts — a slow CargoAI pull rarely recovers within the function
-      // budget, and retrying it would risk the serverless duration limit. Bail
-      // immediately on definitive errors (401/403/404).
-      const total = 1 + Math.max(0, config.cargoaiRetries);
+      let succeeded = false;
       let lastErr: any;
-      for (let i = 0; i < total; i++) {
-        try {
-          data = await doFetch();
-          lastErr = undefined;
-          break;
-        } catch (err: any) {
-          lastErr = err;
-          const retriable = !err?.fatal && !(err instanceof TimeoutError);
-          if (!retriable || i === total - 1) break;
-          ctx.logger.add('query_cargoai', 'info', {
-            event: 'retry',
-            attempt: i + 1,
-            rateLimited: !!err?.rateLimited,
-          });
-          // Back off longer when rate-limited so we don't keep hammering.
-          const base = err?.rateLimited ? config.rateLimitDelayMs * 3 : config.rateLimitDelayMs;
-          await sleep(base + 300 * i);
+
+      // Try each key set in turn; switch keys on quota/rate/unauthorized.
+      for (let k = 0; k < keySets.length && !succeeded; k++) {
+        const { label, headers } = keySets[k];
+        const moreKeys = k < keySets.length - 1;
+
+        // Pace the start of each CargoAI call so concurrent air numbers don't
+        // all hit the per-second rate limit at once (429).
+        await acquireCargoSlot(config.cargoaiMinGapMs);
+
+        const total = 1 + Math.max(0, config.cargoaiRetries);
+        let keyErr: any;
+        for (let i = 0; i < total; i++) {
+          try {
+            data = await doFetch(headers);
+            keyErr = undefined;
+            succeeded = true;
+            break;
+          } catch (err: any) {
+            keyErr = err;
+            if (err?.notFound) throw err; // definitive — no key will find it
+            // Don't retry the SAME key on: timeout (budget), unauthorized (bad
+            // key), or rate/quota when a fallback key is available (jump to it).
+            const retrySameKey =
+              !(err instanceof TimeoutError) &&
+              !err?.unauthorized &&
+              !(err?.rateLimited && moreKeys);
+            if (!retrySameKey || i === total - 1) break;
+            ctx.logger.add('query_cargoai', 'info', {
+              event: 'retry',
+              key: label,
+              attempt: i + 1,
+              rateLimited: !!err?.rateLimited,
+            });
+            const base = err?.rateLimited ? config.rateLimitDelayMs * 3 : config.rateLimitDelayMs;
+            await sleep(base + 300 * i);
+          }
+        }
+
+        if (succeeded) break;
+        lastErr = keyErr;
+        // A pure timeout won't be faster on another key — don't waste the quota.
+        if (keyErr instanceof TimeoutError) break;
+        if (moreKeys) {
+          ctx.logger.add('query_cargoai', 'info', { event: 'key_fallback', from: label });
         }
       }
-      if (lastErr) throw lastErr;
+
+      if (!succeeded) throw lastErr ?? new Error('CargoAI request failed');
     } catch (err: any) {
       ctx.logger.add('query_cargoai', 'error', { reason: String(err?.message ?? err) });
       r.error = {

@@ -127,7 +127,8 @@ docker run --rm -p 5173:5173 -p 3001:3001 cargo-tracker
 | `SEA_RETRIES`          | `2`                   | повтори для Pier2Pier (переви­користовує cookie jar) |
 | `CARGOAI_TIMEOUT_MS`   | `15000`               | таймаут для CargoAI (великі відповіді, повільний pull) |
 | `CARGOAI_RETRIES`      | `2`                   | повтори CargoAI для нестабільних запитів |
-| `CARGOAI_MIN_GAP_MS`   | `1500`                | пауза-черга між викликами CargoAI (анти-429 per-sec) |
+| `CARGOAI_MIN_GAP_MS`   | `750`                 | пауза-черга між викликами CargoAI (анти-429 per-sec) |
+| `RAPID_API_KEY_FALLBACK`| —                    | 2-й ключ RapidAPI (2-га квота): фоллбек при 429/квоті (аліас: `RAPIDAPI_KEY_FALLBACK`) |
 | `RETRIES`              | `1`                   | кількість повторів на джерело                   |
 | `RATE_LIMIT_DELAY_MS`  | `600`                 | пауза між запитами (rate limiting)              |
 | `RAPIDAPI_KEY`         | —                     | ключ CargoAI через RapidAPI; вмикає режим `x-rapidapi-key` (пріоритетний) |

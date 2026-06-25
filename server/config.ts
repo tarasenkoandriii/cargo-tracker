@@ -55,13 +55,11 @@ export const config = {
   cargoaiRetries: int('CARGOAI_RETRIES', 2),
 
   /**
-   * Minimum gap (ms) between consecutive CargoAI/RapidAPI requests, to avoid
-   * per-second 429 bursts when air numbers run concurrently. NOTE: if requests
-   * fail *more* as this grows, the bottleneck is the plan's request QUOTA (not a
-   * rate limit) — pacing can't fix a depleted quota. 1500ms was the best
-   * observed value; raise only if you confirm a genuine per-second rate limit.
+   * Minimum gap (ms) between consecutive CargoAI/RapidAPI requests, to soften
+   * per-second 429 bursts when air numbers run concurrently. With a fallback key
+   * configured we can afford a shorter gap (failures roll over to the 2nd key).
    */
-  cargoaiMinGapMs: int('CARGOAI_MIN_GAP_MS', 1500),
+  cargoaiMinGapMs: int('CARGOAI_MIN_GAP_MS', 750),
 
   /** Retries for transient network errors (ТЗ §11). */
   retries: int('RETRIES', 1),
@@ -81,6 +79,13 @@ export const config = {
    * switches to this mode automatically.
    */
   rapidapiKey: process.env.RAPIDAPI_KEY || null,
+  /**
+   * Optional 2nd RapidAPI key (a separate account = a separate quota). When the
+   * primary key is exhausted/blocked (429 / quota), the connector retries the
+   * same request with this key before giving up.
+   */
+  rapidapiKeyFallback:
+    process.env.RAPIDAPI_KEY_FALLBACK || process.env.RAPID_API_KEY_FALLBACK || null,
   rapidapiHost:
     process.env.RAPIDAPI_HOST || 'air-cargo-co2-track-and-trace.p.rapidapi.com',
 
