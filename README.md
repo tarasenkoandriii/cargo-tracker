@@ -129,6 +129,8 @@ docker run --rm -p 5173:5173 -p 3001:3001 cargo-tracker
 | `CARGOAI_RETRIES`      | `2`                   | повтори CargoAI для нестабільних запитів |
 | `CARGOAI_MIN_GAP_MS`   | `1500`                | пауза в межах однієї черги-ключа CargoAI (анти-429 per-sec) |
 | `RAPID_API_KEY_FALLBACK`| —                    | 2-й ключ RapidAPI (2-га квота): друга черга — авіа-номери діляться парне/непарне між ключами (аліас: `RAPIDAPI_KEY_FALLBACK`) |
+| `CARGOAI_PROXY_URL`    | —                     | проксі лише для CargoAI/RapidAPI (підозра на IP-фільтр); `http://user:pass@host:port`; не обходить per-key ліміт |
+| `WEBSHARE_PROXY_USERNAME` / `_PASSWORD` | — | зручний спосіб задати Webshare-проксі: connector сам збере backbone-URL `p.webshare.io` з `-rotate` (новий IP на запит). Опц.: `_COUNTRY`, `_PORT`, `_ROTATE` |
 | `RETRIES`              | `1`                   | кількість повторів на джерело                   |
 | `RATE_LIMIT_DELAY_MS`  | `600`                 | пауза між запитами (rate limiting)              |
 | `RAPIDAPI_KEY`         | —                     | ключ CargoAI через RapidAPI; вмикає режим `x-rapidapi-key` (пріоритетний) |

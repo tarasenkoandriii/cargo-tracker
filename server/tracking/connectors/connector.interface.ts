@@ -60,16 +60,20 @@ export async function retry<T>(
   throw lastErr;
 }
 
-/** fetch() with an AbortController-based timeout. */
+/** fetch() with an AbortController-based timeout. An optional undici
+ * `dispatcher` (e.g. a ProxyAgent) routes the request through a proxy. */
 export async function fetchWithTimeout(
   url: string,
   init: RequestInit,
   ms: number,
+  dispatcher?: unknown,
 ): Promise<Response> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
-    return await fetch(url, { ...init, signal: ctrl.signal });
+    const opts: any = { ...init, signal: ctrl.signal };
+    if (dispatcher) opts.dispatcher = dispatcher; // undici reads this off init
+    return await fetch(url, opts);
   } catch (err) {
     if ((err as Error).name === 'AbortError') {
       throw new TimeoutError(`Request to ${url} timed out`);

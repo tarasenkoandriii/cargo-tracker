@@ -44,6 +44,16 @@ export class TrackingController {
         rapidapiKey: !!config.rapidapiKey,
         rapidapiKeyFallback: !!config.rapidapiKeyFallback,
         cargoaiApiKey: !!config.cargoaiApiKey,
+        cargoaiProxy: !!config.cargoaiProxyUrl,
+        cargoaiProxyHost: (() => {
+          if (!config.cargoaiProxyUrl) return null;
+          try {
+            const u = new URL(config.cargoaiProxyUrl);
+            return `${u.hostname}:${u.port || '80'}`; // host only, no credentials
+          } catch {
+            return 'set';
+          }
+        })(),
         grokApiKey: !!config.grokApiKey,
         cargoaiMinGapMs: config.cargoaiMinGapMs,
         cargoaiTimeoutMs: config.cargoaiTimeoutMs,

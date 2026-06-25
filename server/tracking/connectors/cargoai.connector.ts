@@ -44,6 +44,28 @@ function acquireCargoSlot(lane: number, minGapMs: number): Promise<void> {
  */
 let cargoKeyRR = 0;
 
+/**
+ * Lazily-built undici ProxyAgent for CargoAI requests. Created once per process
+ * only if CARGOAI_PROXY_URL / HTTPS_PROXY is set. If `undici` can't be loaded
+ * the proxy is silently disabled (requests go direct) rather than crashing.
+ */
+let cargoDispatcher: unknown = null;
+let cargoDispatcherReady = false;
+async function getCargoDispatcher(): Promise<unknown> {
+  if (cargoDispatcherReady) return cargoDispatcher;
+  cargoDispatcherReady = true;
+  const proxy = config.cargoaiProxyUrl;
+  if (proxy) {
+    try {
+      const { ProxyAgent } = await import('undici');
+      cargoDispatcher = new ProxyAgent(proxy);
+    } catch {
+      cargoDispatcher = null; // undici unavailable — go direct
+    }
+  }
+  return cargoDispatcher;
+}
+
 
 /**
  * CargoAI Track & Trace API connector for air cargo (ТЗ §5, §16).
@@ -122,11 +144,13 @@ export class CargoAiConnector implements Connector {
     r.url = url;
 
     let data: any;
+    const dispatcher = await getCargoDispatcher();
     const doFetch = async (headers: Record<string, string>, timeoutMs: number) => {
       const res = await fetchWithTimeout(
         url,
         { headers: { accept: 'application/json', ...headers } },
         timeoutMs,
+        dispatcher,
       );
       if (res.status === 401 || res.status === 403) {
         const e: any = new Error('unauthorized');

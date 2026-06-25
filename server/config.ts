@@ -16,6 +16,30 @@ function int(name: string, def: number): number {
   return Number.isFinite(v) ? v : def;
 }
 
+/**
+ * Build a Webshare backbone proxy URL from convenience env vars, so the user can
+ * just paste their Webshare username/password instead of hand-crafting a URL.
+ * Webshare backbone host is p.webshare.io; username params are appended with
+ * hyphens: `{username}[-{country}][-rotate]`. Rotation (a fresh exit IP per
+ * request) is ON by default — ideal for dodging any per-IP filtering.
+ * Returns null if credentials aren't set.
+ */
+function webshareProxyUrl(): string | null {
+  const user = process.env.WEBSHARE_PROXY_USERNAME;
+  const pass = process.env.WEBSHARE_PROXY_PASSWORD;
+  if (!user || !pass) return null;
+  const host = process.env.WEBSHARE_PROXY_HOST || 'p.webshare.io';
+  const port = process.env.WEBSHARE_PROXY_PORT || '80';
+  const country = (process.env.WEBSHARE_PROXY_COUNTRY || '').trim().toLowerCase();
+  const rotate = !['0', 'false', 'no', 'off'].includes(
+    (process.env.WEBSHARE_PROXY_ROTATE || 'true').trim().toLowerCase(),
+  );
+  let u = user;
+  if (country) u += `-${country}`;
+  if (rotate) u += '-rotate';
+  return `http://${u}:${pass}@${host}:${port}`;
+}
+
 export const config = {
   /**
    * When true the pipeline makes NO external requests and uses a deterministic
@@ -71,6 +95,27 @@ export const config = {
   cargoaiApiKey: process.env.CARGOAI_API_KEY || null,
   /** Explicit base URL override; if unset it is derived per access mode. */
   cargoaiBaseUrl: process.env.CARGOAI_BASE_URL || null,
+
+  /**
+   * Optional HTTP(S) proxy for CargoAI/RapidAPI requests only. Set this if you
+   * suspect RapidAPI is filtering by the (shared) serverless egress IP — routing
+   * through a proxy changes the source IP. Three ways to set it (first wins):
+   *   1) CARGOAI_PROXY_URL = http://user:pass@host:port (full URL, any provider)
+   *   2) Webshare convenience vars: WEBSHARE_PROXY_USERNAME / _PASSWORD
+   *      (+ optional _HOST / _PORT / _COUNTRY / _ROTATE) — builds the backbone
+   *      rotating URL automatically (fresh exit IP per request by default).
+   *   3) the conventional HTTPS_PROXY / HTTP_PROXY.
+   * NOTE: a proxy does NOT bypass the per-key rate/quota limit (the API key is
+   * sent in the header regardless of IP).
+   */
+  cargoaiProxyUrl:
+    process.env.CARGOAI_PROXY_URL ||
+    webshareProxyUrl() ||
+    process.env.HTTPS_PROXY ||
+    process.env.https_proxy ||
+    process.env.HTTP_PROXY ||
+    process.env.http_proxy ||
+    null,
 
   /**
    * RapidAPI access mode for CargoAI. CargoAI distributes its Track & Trace
