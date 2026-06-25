@@ -11,9 +11,13 @@ import { DemoConnector } from '../connectors/demo.connector';
  * Chooses the ordered list of connectors to try for a shipment (ТЗ §10).
  *
  * Live order:
- *   air  → track-trace.com → CargoAI (if key) → carrier website (fallback)
+ *   air  → CargoAI (if key) → track-trace.com → carrier website (fallback)
  *   sea  → track-trace.com → carrier website (fallback)
  * Demo mode → the deterministic DemoConnector only.
+ *
+ * Note: when a CargoAI/RapidAPI key is present it is tried first for air, since
+ * it is the reliable structured source; track-trace remains as a fallback (it
+ * generally can't be scraped from a serverless host without a browser).
  *
  * Adding a new source = register its connector here; the pipeline is unchanged.
  */
@@ -29,10 +33,11 @@ export class SourceRouter {
   route(type: ShipmentType, demoMode: boolean): Connector[] {
     if (demoMode) return [this.demo];
 
-    const chain: Connector[] = [this.trackTrace];
+    const chain: Connector[] = [];
     if (type === ShipmentType.AIR && (config.cargoaiApiKey || config.rapidapiKey)) {
       chain.push(this.cargoai);
     }
+    chain.push(this.trackTrace);
     chain.push(this.carrierWeb);
     return chain.filter((c) => c.supports(type));
   }

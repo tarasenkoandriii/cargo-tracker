@@ -169,7 +169,10 @@ Input Parser → Detector → Source Router → Connector(s) → Parser
 
 1. **track-trace.com** — основне джерело (авіа `/aircargo`, море `/container`).
 2. **Сайти перевізників** — фолбек (шаблон-конектор для розширення).
-3. **CargoAI API** — для авіа, якщо задано `CARGOAI_API_KEY`.
+3. **CargoAI API** (`GET /track?awb=…`) — для авіа (AWB), якщо задано
+   `RAPIDAPI_KEY` або `CARGOAI_API_KEY`. Це структуроване джерело, тож для авіа
+   воно пробується **першим**. Контейнери (море) CargoAI не покриває — для них
+   лишаються track-trace + конектор перевізника.
 
 Агент **не обходить** CAPTCHA чи авторизацію — у таких випадках повертається
 структурована помилка (`CAPTCHA_REQUIRED`, `LOGIN_REQUIRED`,

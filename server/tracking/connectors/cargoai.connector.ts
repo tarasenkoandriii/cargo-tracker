@@ -3,6 +3,7 @@ import { config } from '../../config';
 import {
   ErrorCode,
   emptyTrackResult,
+  NormalizedStatus,
   ShipmentType,
   TrackingEvent,
   TrackResult,
@@ -69,8 +70,8 @@ export class CargoAiConnector implements Connector {
         }
       : { authorization: `Bearer ${config.cargoaiApiKey}` };
 
-    const [prefix, serial] = ctx.normalizedNumber.split('-');
-    const url = `${baseUrl}/tracking/v1/awb/${prefix}/${serial}`;
+    // Real CargoAI endpoint: GET /track?awb=NNN-NNNNNNNN (RapidAPI & direct).
+    const url = `${baseUrl}/track?awb=${encodeURIComponent(ctx.normalizedNumber)}`;
     r.url = url;
 
     let data: any;
@@ -119,36 +120,180 @@ export class CargoAiConnector implements Connector {
     return this.map(data, ctx, r);
   }
 
-  /** Map a CargoAI payload to the internal TrackResult shape. */
+  /**
+   * Maps the CargoAI Track response to the internal TrackResult.
+   *
+   * Real shape (RapidAPI "Air Cargo Track & Trace"): a JSON array of shipments,
+   * each `{ awb, origin, destination, events: [...] }`. Events carry IATA
+   * milestone codes (BKD, RCS, FOH, DEP, ARR, RCF, …) and, for flight legs, a
+   * nested `flight` block with scheduled/actual departure & arrival times.
+   */
   private map(data: any, ctx: TrackContext, r: TrackResult): TrackResult {
-    const milestones: any[] = data?.milestones ?? data?.events ?? [];
-    if (!Array.isArray(milestones) || milestones.length === 0) {
+    const shipment = Array.isArray(data) ? data[0] : data;
+    const rawEvents: any[] = shipment?.events;
+    if (!shipment || !Array.isArray(rawEvents) || rawEvents.length === 0) {
       r.error = { code: ErrorCode.NOT_FOUND, message: 'No events returned', source: this.name };
       return r;
     }
-    const events: TrackingEvent[] = milestones.map((m) => ({
-      event_code: m.code ?? m.statusCode ?? null,
-      event_name: m.name ?? m.status ?? null,
-      normalized_status: this.normalizer.normalize(m.name ?? m.status ?? '', ShipmentType.AIR),
-      location: m.location ?? m.airport ?? null,
-      datetime: m.datetime ?? m.timestamp ?? null,
-      raw_text: m.description ?? m.name ?? null,
-      raw_datetime: m.rawDatetime ?? null,
-      is_actual: m.actual ?? null,
-      timezone: m.timezone ?? null,
-      timezone_confidence: m.timezone ? 'source_provided' : 'unknown',
-    }));
-    const last = events[events.length - 1];
+
+    const events: TrackingEvent[] = rawEvents.map((m) => {
+      const code: string | null = m?.code ?? null;
+      const datetime = this.eventDatetime(m);
+      const isActual =
+        m?.isPlanned === false ? true : m?.isPlanned === true ? false : null;
+      const name = code ? CARGOAI_CODE_NAME[code] ?? code : null;
+      return {
+        event_code: code,
+        event_name: name,
+        normalized_status: code
+          ? CARGOAI_CODE_STATUS[code] ?? 'unknown'
+          : 'unknown',
+        location: m?.eventLocation ?? m?.origin ?? null,
+        datetime,
+        raw_text: code ? `${code}${name && name !== code ? ` ${name}` : ''}` : null,
+        raw_datetime: datetime,
+        is_actual: isActual,
+        timezone: null,
+        timezone_confidence: datetime && /[+-]\d{2}:?\d{2}$/.test(datetime)
+          ? 'source_provided'
+          : 'unknown',
+      };
+    });
+
+    // Chronological order; undated events (e.g. booking) sort first.
+    events.sort((a, b) => this.ts(a.datetime) - this.ts(b.datetime));
+
+    // Current status = latest event that actually happened (has a date).
+    const actualDated = events.filter((e) => e.is_actual && e.datetime);
+    const last = actualDated.length
+      ? actualDated[actualDated.length - 1]
+      : events[events.length - 1];
+
+    // Trip-level dates derived from flight legs across all events.
+    let etd: string | null = null;
+    let eta: string | null = null;
+    let actualDeparture: string | null = null;
+    let actualArrival: string | null = null;
+    const transit = new Set<string>();
+    for (const m of rawEvents) {
+      const f = m?.flight;
+      if (f) {
+        etd = this.earlier(etd, f.scheduledDeparture);
+        actualDeparture = this.earlier(actualDeparture, f.actualDeparture);
+        eta = this.later(eta, f.scheduledArrival);
+        actualArrival = this.later(actualArrival, f.actualArrival);
+        if (f.destination) transit.add(f.destination);
+      }
+      if (m?.eventLocation) transit.add(m.eventLocation);
+    }
+
+    const origin: string | null = shipment.origin ?? null;
+    const destination: string | null = shipment.destination ?? null;
+    [origin, destination].forEach((a) => a && transit.delete(a));
+
     r.found = true;
     r.events = events;
     r.current_status = last.normalized_status;
     r.raw_status = last.raw_text;
-    r.eta = data?.eta ?? null;
-    r.etd = data?.etd ?? null;
-    r.actual_departure = data?.actualDeparture ?? null;
-    r.actual_arrival = data?.actualArrival ?? null;
-    r.origin = data?.origin ?? null;
-    r.destination = data?.destination ?? null;
+    r.etd = etd;
+    r.eta = eta;
+    r.actual_departure = actualDeparture;
+    r.actual_arrival = actualArrival;
+    r.origin = origin;
+    r.destination = destination;
+    r.transit_points = [...transit];
     return r;
   }
+
+  /** Best-effort ISO datetime for an event. Never fabricates a value. */
+  private eventDatetime(m: any): string | null {
+    if (typeof m?.eventDate === 'string') return m.eventDate;
+    const f = m?.flight;
+    if (f) {
+      if (m?.code === 'DEP' && f.actualDeparture) return f.actualDeparture;
+      if ((m?.code === 'ARR' || m?.code === 'RCF') && f.actualArrival) return f.actualArrival;
+      return f.actualDeparture ?? f.actualArrival ?? f.scheduledDeparture ?? null;
+    }
+    return m?.scheduledDepartureDate ?? null;
+  }
+
+  private ts(iso: string | null): number {
+    if (!iso) return -Infinity; // undated → earliest
+    const t = Date.parse(iso);
+    return Number.isFinite(t) ? t : -Infinity;
+  }
+
+  private earlier(cur: string | null, next: any): string | null {
+    if (typeof next !== 'string') return cur;
+    if (!cur) return next;
+    return Date.parse(next) < Date.parse(cur) ? next : cur;
+  }
+
+  private later(cur: string | null, next: any): string | null {
+    if (typeof next !== 'string') return cur;
+    if (!cur) return next;
+    return Date.parse(next) > Date.parse(cur) ? next : cur;
+  }
 }
+
+/** IATA air-cargo milestone codes → normalized status vocabulary (ТЗ §7). */
+const CARGOAI_CODE_STATUS: Record<string, NormalizedStatus> = {
+  FWB: 'created',
+  BKG: 'booked',
+  BKD: 'booked',
+  BKC: 'booked',
+  FOH: 'received',
+  RCS: 'received',
+  ACC: 'received',
+  RCV: 'received',
+  SCW: 'in_origin_terminal',
+  MAN: 'in_origin_terminal',
+  CLD: 'in_origin_terminal',
+  PRE: 'in_origin_terminal',
+  DEP: 'departed',
+  TRA: 'in_transit',
+  AST: 'in_transit',
+  TFD: 'in_transit',
+  RCT: 'in_transit',
+  ARE: 'in_transit',
+  ARR: 'arrived',
+  ARV: 'arrived',
+  RCF: 'arrived',
+  CLC: 'customs',
+  NFD: 'ready_for_pickup',
+  PIC: 'ready_for_pickup',
+  DLV: 'delivered',
+};
+
+/** Human-readable names for the milestone codes (for raw_status / display). */
+const CARGOAI_CODE_NAME: Record<string, string> = {
+  ACC: 'Accepted',
+  AST: 'Assigned to another flight',
+  ARR: 'Arrived',
+  ARE: 'Arrival estimated',
+  DLV: 'Delivered',
+  DDL: 'Documents Delivered',
+  RCV: 'Received',
+  DEP: 'Departed',
+  MAN: 'Manifested',
+  BKC: 'Booking Confirmed',
+  BKD: 'Booked',
+  BKG: 'Booking Generated',
+  RCS: 'Received from Shipper',
+  RCF: 'Received from Flight',
+  NFD: 'Consignee Notified',
+  FOH: 'Freight on Hand',
+  AWD: 'Documentation Delivered',
+  CLD: 'Cargo Loaded',
+  PRE: 'Shipment Prepared',
+  ARV: 'Arrived',
+  FWB: 'Electronic AWB',
+  TRA: 'In Transit',
+  AWR: 'Documents Received',
+  TFD: 'Transferred',
+  RCT: 'Received from other airline',
+  SCW: 'Checked into Warehouse',
+  CLC: 'Cleared by Customs',
+  TPL: 'Temperature Log',
+  PIC: 'Available for Pickup',
+};
