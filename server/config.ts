@@ -44,6 +44,14 @@ export const config = {
   seaTimeoutMs: int('SEA_TIMEOUT_MS', 15000),
   seaRetries: int('SEA_RETRIES', 2),
 
+  /**
+   * CargoAI does a near-real-time pull and can return large payloads, so an
+   * 8s timeout sometimes isn't enough (the call then falls through to a
+   * fallback and shows SOURCE_UNAVAILABLE even though data exists). Give air
+   * a longer dedicated timeout.
+   */
+  cargoaiTimeoutMs: int('CARGOAI_TIMEOUT_MS', 15000),
+
   /** Retries for transient network errors (ТЗ §11). */
   retries: int('RETRIES', 1),
 

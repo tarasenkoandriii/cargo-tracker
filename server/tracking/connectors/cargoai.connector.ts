@@ -86,7 +86,7 @@ export class CargoAiConnector implements Connector {
                 ...authHeaders,
               },
             },
-            config.timeoutMs,
+            config.cargoaiTimeoutMs,
           );
           if (res.status === 401 || res.status === 403) {
             const e: any = new Error('unauthorized');

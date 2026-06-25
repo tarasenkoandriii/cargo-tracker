@@ -125,6 +125,7 @@ docker run --rm -p 5173:5173 -p 3001:3001 cargo-tracker
 | `CONCURRENCY`          | `4`                   | скільки номерів обробляється паралельно за запит |
 | `SEA_TIMEOUT_MS`       | `15000`               | таймаут для морського джерела (Pier2Pier повільніше) |
 | `SEA_RETRIES`          | `2`                   | повтори для Pier2Pier (переви­користовує cookie jar) |
+| `CARGOAI_TIMEOUT_MS`   | `15000`               | таймаут для CargoAI (великі відповіді, повільний pull) |
 | `RETRIES`              | `1`                   | кількість повторів на джерело                   |
 | `RATE_LIMIT_DELAY_MS`  | `600`                 | пауза між запитами (rate limiting)              |
 | `RAPIDAPI_KEY`         | —                     | ключ CargoAI через RapidAPI; вмикає режим `x-rapidapi-key` (пріоритетний) |
