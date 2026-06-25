@@ -108,11 +108,11 @@ export class CargoAiConnector implements Connector {
     r.url = url;
 
     let data: any;
-    const doFetch = async (headers: Record<string, string>) => {
+    const doFetch = async (headers: Record<string, string>, timeoutMs: number) => {
       const res = await fetchWithTimeout(
         url,
         { headers: { accept: 'application/json', ...headers } },
-        config.cargoaiTimeoutMs,
+        timeoutMs,
       );
       if (res.status === 401 || res.status === 403) {
         const e: any = new Error('unauthorized');
@@ -136,37 +136,51 @@ export class CargoAiConnector implements Connector {
       return res.json();
     };
 
+    // Robust timeout check (don't rely on a single class identity surviving the
+    // serverless bundle): treat AbortError / TimeoutError by name too.
+    const isTimeout = (e: any) =>
+      e instanceof TimeoutError || e?.name === 'TimeoutError' || e?.name === 'AbortError';
+
     try {
       let succeeded = false;
       let lastErr: any;
 
-      // Try each key set in turn; switch keys on quota/rate/unauthorized.
+      // Try each key set in turn. KEY POINT: when a fallback key is available we
+      // fail over IMMEDIATELY on *any* non-definitive error (429 / timeout /
+      // network / 5xx) — an exhausted-or-throttled primary key may 429 *or* hang,
+      // and the fresh fallback key (separate quota) usually answers fast (curl:
+      // ~1.5s). So non-final keys get a single, time-bounded attempt; only the
+      // final key spends retries on transient errors. This guarantees the working
+      // fallback is reached quickly instead of burning the budget on a dead key.
       for (let k = 0; k < keySets.length && !succeeded; k++) {
         const { label, headers } = keySets[k];
         const moreKeys = k < keySets.length - 1;
 
-        // Pace the start of each CargoAI call so concurrent air numbers don't
-        // all hit the per-second rate limit at once (429).
-        await acquireCargoSlot(config.cargoaiMinGapMs);
+        const attempts = moreKeys ? 1 : 1 + Math.max(0, config.cargoaiRetries);
+        // Shorter timeout on non-final keys so a hanging primary doesn't eat the
+        // function's time budget before we ever reach the fallback.
+        const timeoutMs = moreKeys
+          ? Math.min(config.cargoaiTimeoutMs, 8000)
+          : config.cargoaiTimeoutMs;
 
-        const total = 1 + Math.max(0, config.cargoaiRetries);
         let keyErr: any;
-        for (let i = 0; i < total; i++) {
+        for (let i = 0; i < attempts; i++) {
+          // Pace the START of every CargoAI call (incl. retries / fallback) so
+          // concurrent air numbers don't hit the per-second rate limit at once.
+          await acquireCargoSlot(config.cargoaiMinGapMs);
           try {
-            data = await doFetch(headers);
+            data = await doFetch(headers, timeoutMs);
             keyErr = undefined;
             succeeded = true;
             break;
           } catch (err: any) {
             keyErr = err;
             if (err?.notFound) throw err; // definitive — no key will find it
-            // Don't retry the SAME key on: timeout (budget), unauthorized (bad
-            // key), or rate/quota when a fallback key is available (jump to it).
+            // Retry only on the final key, only for transient errors, only if
+            // attempts remain. With a fallback available we never retry here.
             const retrySameKey =
-              !(err instanceof TimeoutError) &&
-              !err?.unauthorized &&
-              !(err?.rateLimited && moreKeys);
-            if (!retrySameKey || i === total - 1) break;
+              !moreKeys && !isTimeout(err) && !err?.unauthorized && i < attempts - 1;
+            if (!retrySameKey) break;
             ctx.logger.add('query_cargoai', 'info', {
               event: 'retry',
               key: label,
@@ -180,10 +194,14 @@ export class CargoAiConnector implements Connector {
 
         if (succeeded) break;
         lastErr = keyErr;
-        // A pure timeout won't be faster on another key — don't waste the quota.
-        if (keyErr instanceof TimeoutError) break;
+        // Roll over to the next key on ANY non-definitive error, including
+        // timeout: a throttled primary can be slow while a fresh key is fast.
         if (moreKeys) {
-          ctx.logger.add('query_cargoai', 'info', { event: 'key_fallback', from: label });
+          ctx.logger.add('query_cargoai', 'info', {
+            event: 'key_fallback',
+            from: label,
+            reason: String(keyErr?.code ?? keyErr?.message ?? keyErr),
+          });
         }
       }
 
