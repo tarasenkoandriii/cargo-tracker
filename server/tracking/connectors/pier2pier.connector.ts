@@ -67,10 +67,11 @@ export class Pier2PierConnector implements Connector {
       result.source_name = this.name;
       if (result.found) return result;
       const code = result.error?.code;
+      // Retry the cookie-priming / transient cases (these fail fast, so retrying
+      // is cheap). Do NOT retry TIMEOUT — a slow Pier2Pier response rarely
+      // recovers and retrying it risks the serverless duration budget.
       const retryable =
-        code === ErrorCode.SOURCE_UNAVAILABLE ||
-        code === ErrorCode.TIMEOUT ||
-        code === ErrorCode.PARSING_FAILED;
+        code === ErrorCode.SOURCE_UNAVAILABLE || code === ErrorCode.PARSING_FAILED;
       if (i < attempts - 1 && retryable) {
         ctx.logger.add('query_pier2pier', 'info', { event: 'retry', attempt: i + 1, code });
         await sleep(config.rateLimitDelayMs + 400 * i);

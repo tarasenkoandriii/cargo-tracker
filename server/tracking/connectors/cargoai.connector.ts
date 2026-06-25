@@ -93,13 +93,21 @@ export class CargoAiConnector implements Connector {
         e.fatal = true; // definitive — don't retry
         throw e;
       }
+      if (res.status === 429) {
+        const e: any = new Error('rate limited');
+        e.code = ErrorCode.SOURCE_UNAVAILABLE;
+        e.rateLimited = true; // retry, but with a longer backoff
+        throw e;
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     };
 
     try {
-      // Retry on TIMEOUT and transient errors (a 2nd CargoAI pull often hits a
-      // warmed cache and succeeds), but bail immediately on definitive errors.
+      // Retry transient errors and rate-limits (429) with backoff. Do NOT retry
+      // timeouts — a slow CargoAI pull rarely recovers within the function
+      // budget, and retrying it would risk the serverless duration limit. Bail
+      // immediately on definitive errors (401/403/404).
       const total = 1 + Math.max(0, config.cargoaiRetries);
       let lastErr: any;
       for (let i = 0; i < total; i++) {
@@ -109,9 +117,16 @@ export class CargoAiConnector implements Connector {
           break;
         } catch (err: any) {
           lastErr = err;
-          if (err?.fatal || i === total - 1) break;
-          ctx.logger.add('query_cargoai', 'info', { event: 'retry', attempt: i + 1 });
-          await sleep(config.rateLimitDelayMs + 300 * i);
+          const retriable = !err?.fatal && !(err instanceof TimeoutError);
+          if (!retriable || i === total - 1) break;
+          ctx.logger.add('query_cargoai', 'info', {
+            event: 'retry',
+            attempt: i + 1,
+            rateLimited: !!err?.rateLimited,
+          });
+          // Back off longer when rate-limited so we don't keep hammering.
+          const base = err?.rateLimited ? config.rateLimitDelayMs * 3 : config.rateLimitDelayMs;
+          await sleep(base + 300 * i);
         }
       }
       if (lastErr) throw lastErr;

@@ -29,12 +29,12 @@ export const config = {
   timeoutMs: int('TIMEOUT_MS', 8000),
 
   /**
-   * Max numbers processed concurrently in one request. With per-source retries
-   * and 15s timeouts, a 10-number batch must fit the 60s function budget, so we
-   * default high enough that the standard batch runs in a single wave (one
-   * number per worker). Lower it if you hit external rate limits.
+   * Max numbers processed concurrently in one request. Kept modest: firing many
+   * air numbers at once trips CargoAI/RapidAPI's request-rate limit (429) and
+   * makes results WORSE, not better. This also stays within the serverless
+   * duration budget. Raise only if your data plan allows higher QPS.
    */
-  concurrency: int('CONCURRENCY', 10),
+  concurrency: int('CONCURRENCY', 4),
 
   /**
    * Sea (Pier2Pier) is slower and primes cookies across requests, plus it can
