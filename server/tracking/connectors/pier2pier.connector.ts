@@ -104,14 +104,18 @@ export class Pier2PierConnector implements Connector {
 
       const carrierCode = this.extractCarrierCode(resolveHtml);
 
-      // ── 2) SHELL: page with the data iframe (use CarrierCode if found). ──
-      const shellUrl = carrierCode
-        ? `${base}?CarrierCode=${encodeURIComponent(carrierCode)}&Type=CONT&ID=${encodeURIComponent(id)}`
-        : resolveUrl;
-      const shellHtml =
-        shellUrl === resolveUrl ? resolveHtml : await this.get(shellUrl, cookies, resolveUrl);
+      // Some lines (e.g. MSC) render the data iframe directly on the Company=P2P
+      // page, so try the resolve response first. Others (e.g. CMA CGM) only
+      // expose a CarrierCode link and need the explicit shell step.
+      let iframeUrl = this.extractIframeUrl(resolveHtml);
+      let shellUrl = resolveUrl;
+      if (!iframeUrl && carrierCode) {
+        // ── 2) SHELL: fetch the carrier-specific page that holds the iframe. ──
+        shellUrl = `${base}?CarrierCode=${encodeURIComponent(carrierCode)}&Type=CONT&ID=${encodeURIComponent(id)}`;
+        const shellHtml = await this.get(shellUrl, cookies, resolveUrl);
+        iframeUrl = this.extractIframeUrl(shellHtml);
+      }
 
-      const iframeUrl = this.extractIframeUrl(shellHtml);
       if (!iframeUrl) {
         ctx.logger.add('query_pier2pier', 'error', { reason: 'no_iframe' });
         r.error = {
@@ -219,7 +223,16 @@ export class Pier2PierConnector implements Connector {
   }
 
   /**
-   * Parse the iframe HTML (a Kendo UI grid). Never fabricates data.
+   * Parse the iframe HTML. Pier2Pier embeds carrier-specific layouts, so we
+   * detect the format and dispatch. Never fabricates data.
+   */
+  private parse(html: string, r: TrackResult, carrierCode: string | null): TrackResult {
+    if (/msc-flow-tracking/i.test(html)) return this.parseMsc(html, r);
+    return this.parseKendo(html, r, carrierCode);
+  }
+
+  /**
+   * Parse the Kendo UI grid layout (e.g. CMA CGM). Never fabricates data.
    *
    * Each move row has: td.date (span.calendar + span.time), a td whose
    * span.capsule holds the move name, td.location (city + div.terminal-name),
@@ -227,7 +240,7 @@ export class Pier2PierConnector implements Connector {
    * master/detail copy, so rows are de-duplicated by date+status+location.
    * POL/POD/ETA come from the .timeline--item header.
    */
-  private parse(html: string, r: TrackResult, carrierCode: string | null): TrackResult {
+  private parseKendo(html: string, r: TrackResult, carrierCode: string | null): TrackResult {
     const $ = cheerio.load(html);
 
     const events: TrackingEvent[] = [];
@@ -331,6 +344,111 @@ export class Pier2PierConnector implements Connector {
     r.raw_status = last.raw_text;
     return r;
   }
+
+  /**
+   * Parse the MSC layout (div.msc-flow-tracking). Never fabricates data.
+   *
+   * Each move is a `.msc-flow-tracking__step` with cells:
+   *  --two  date (DD/MM/YYYY)   --three location   --four description
+   *  --five Empty/Laden/Vessel/Voyage   --six terminal
+   * Header POL/POD come from `.msc-flow-tracking__details-*` pairs. The
+   * "Estimated Time of Arrival" step is a future ETA (not an actual move).
+   */
+  private parseMsc(html: string, r: TrackResult): TrackResult {
+    const $ = cheerio.load(html);
+
+    const val = (el: any, sel: string) =>
+      (sel ? $(el).find(`${sel} .data-value`) : $(el).find('.data-value'))
+        .first()
+        .text()
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const events: TrackingEvent[] = [];
+    const seen = new Set<string>();
+
+    $('.msc-flow-tracking__step').each((_i, step) => {
+      const $s = $(step);
+      const dateStr = val($s, '.msc-flow-tracking__cell--two');
+      const dateM = dateStr.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+      if (!dateM) return; // header / non-data rows
+
+      const location = val($s, '.msc-flow-tracking__cell--three') || null;
+      const desc = val($s, '.msc-flow-tracking__cell--four');
+      const vessel = val($s, '.msc-flow-tracking__cell--five');
+      const terminal = val($s, '.msc-flow-tracking__cell--six');
+      if (!desc) return;
+
+      const datetime = `${dateM[3]}-${dateM[2]}-${dateM[1]}T00:00:00`;
+      const isEstimate = /estimat|^eta\b|expected/i.test(desc);
+      const move = matchMove(desc);
+
+      const key = `${datetime}|${desc.toUpperCase()}|${location}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+
+      const loc = [location, terminal].filter(Boolean).join(', ') || location;
+      const vesselTxt = vessel && !/^laden$|^empty$/i.test(vessel) ? ` · ${vessel}` : '';
+
+      events.push({
+        event_code: null,
+        event_name: desc,
+        normalized_status: move.status,
+        location: loc,
+        datetime,
+        raw_text: desc + vesselTxt,
+        raw_datetime: datetime,
+        is_actual: !isEstimate,
+        timezone: null,
+        timezone_confidence: 'unknown',
+      });
+    });
+
+    if (events.length === 0) {
+      r.error = {
+        code: ErrorCode.PARSING_FAILED,
+        message: 'MSC data page fetched but no moves could be parsed',
+        source: this.name,
+      };
+      return r;
+    }
+
+    events.sort((a, b) => ts(a.datetime) - ts(b.datetime));
+    const actual = events.filter((e) => e.is_actual && e.datetime);
+    const last = actual.length ? actual[actual.length - 1] : events[events.length - 1];
+
+    // Header details (label/value pairs).
+    const details: Record<string, string> = {};
+    $('.msc-flow-tracking__details-heading').each((_i, h) => {
+      const label = $(h).text().replace(/\s+/g, ' ').trim();
+      const value = $(h)
+        .nextAll('.msc-flow-tracking__details-value')
+        .first()
+        .text()
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (label) details[label.toUpperCase()] = value;
+    });
+    r.origin = details['PORT OF LOAD'] || details['SHIPPED FROM'] || events[0].location;
+    r.destination = details['PORT OF DISCHARGE'] || details['SHIPPED TO'] || null;
+
+    // ETA from the explicit "Estimated Time of Arrival" step (a future row).
+    const etaStep = events.find((e) => /estimat.*arriv/i.test(e.event_name));
+    if (etaStep) r.eta = etaStep.datetime;
+
+    // Container type from the container card (x-text="container.ContainerType").
+    const typeM = $('[x-text="container.ContainerType"]').first().text().trim();
+    if (typeM) r.container_milestones = { container_type: typeM };
+
+    // Pier2Pier shows MSC for this layout.
+    r.carrier = { name: 'MSC', code: 'MSCU', source: 'pier2pier' };
+
+    r.found = true;
+    r.events = events;
+    r.current_status = last.normalized_status;
+    r.raw_status = last.raw_text;
+    return r;
+  }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -374,14 +492,15 @@ function ts(iso: string | null): number {
 }
 
 const MOVE_RULES: Array<[RegExp, NormalizedStatus]> = [
+  [/ESTIMATED.*ARRIVAL|EXPECTED.*ARRIVAL/i, 'arrived'], // future ETA row (marked not-actual)
   [/EMPTY\s+RETURN|EMPTY\s+RETURNED|EMPTY\s+IN/i, 'container_returned'],
   [/EMPTY\s+TO\s+SHIPPER|EMPTY\s+DISPATCH|EMPTY\s+PICK|EMPTY\s+OUT/i, 'container_picked_up'],
-  [/READY\s+TO\s+BE\s+LOADED|GATE\s*IN|RECEIVED\s+AT|FULL\s+IN/i, 'in_origin_terminal'],
-  [/LOADED\s+ON\s+BOARD|LOADED\s+ON\s+VESSEL|SHIPPED\s+ON\s+BOARD/i, 'in_origin_terminal'],
-  [/VESSEL\s+DEPARTURE|DEPARTED|SAILED|DEPARTURE\s+FROM/i, 'departed'],
+  [/READY\s+TO\s+BE\s+LOADED|GATE\s*IN|RECEIVED\s+AT|EXPORT\s+RECEIVED|FULL\s+IN/i, 'in_origin_terminal'],
+  [/LOADED\s+ON\s+BOARD|LOADED\s+ON\s+VESSEL|SHIPPED\s+ON\s+BOARD|EXPORT\s+LOADED/i, 'in_origin_terminal'],
+  [/VESSEL\s+DEPARTURE|VESSEL\s+DEPARTED|DEPARTED|SAILED|DEPARTURE\s+FROM/i, 'departed'],
   [/TRANSSHIP|TRANSHIP|IN\s+TRANSIT|ON\s+BOARD\s+AT/i, 'in_transit'],
   [/DISCHARG.*TRANSHIP|DISCHARG.*TRANSSHIP/i, 'in_transit'],
-  [/VESSEL\s+ARRIVAL|ARRIVED|DISCHARG|UNLOADED/i, 'arrived'],
+  [/VESSEL\s+ARRIVAL|VESSEL\s+ARRIVED|ARRIVED|IMPORT\s+DISCHARG|DISCHARG|UNLOADED/i, 'arrived'],
   [/CUSTOMS|CLEARED/i, 'customs'],
   [/AVAILABLE\s+FOR\s+PICK|READY\s+FOR\s+PICK|FULL\s+OUT/i, 'ready_for_pickup'],
   [/GATE\s*OUT|DELIVERED|FULL\s+DELIVERY/i, 'delivered'],
