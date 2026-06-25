@@ -229,6 +229,7 @@ export class Pier2PierConnector implements Connector {
   private parse(html: string, r: TrackResult, carrierCode: string | null): TrackResult {
     if (/msc-flow-tracking/i.test(html)) return this.parseMsc(html, r);
     if (/tracing_by_container|hl-tbl/i.test(html)) return this.parseHapag(html, r);
+    if (/transport-plan__list|data-test="transport-plan"/i.test(html)) return this.parseMaersk(html, r);
     return this.parseKendo(html, r, carrierCode);
   }
 
@@ -563,6 +564,110 @@ export class Pier2PierConnector implements Connector {
     r.raw_status = last.raw_text;
     return r;
   }
+
+  /**
+   * Parse the Maersk layout (Pier2Pier embeds Maersk's own tracking page,
+   * built with mc- web components). Milestones live in `ul.transport-plan__list`
+   * as `li.transport-plan__list__item`; each has a label, a `milestone-date`,
+   * and an optional location (which carries forward). Never fabricates data.
+   */
+  private parseMaersk(html: string, r: TrackResult): TrackResult {
+    const $ = cheerio.load(html);
+    const events: TrackingEvent[] = [];
+    const seen = new Set<string>();
+    let lastLoc: string | null = null;
+
+    $('.transport-plan__list__item').each((_i, li) => {
+      const $li = $(li);
+      const loc = $li.find('[data-test="location-name"] strong').first().text().trim();
+      if (loc) lastLoc = loc;
+
+      const mEl = $li.find('[data-test="milestone"]').first();
+      const dateStr = mEl.find('[data-test="milestone-date"]').first().text().trim();
+      const label = mEl
+        .clone()
+        .find('[data-test="milestone-date"]')
+        .remove()
+        .end()
+        .text()
+        .replace(/\s+/g, ' ')
+        .trim();
+      const datetime = maerskDate(dateStr);
+      if (!label || !datetime) return;
+
+      // Items marked complete are actual; incomplete/estimated are planned.
+      const dt = ($li.attr('data-test') || '').toLowerCase();
+      const isActual = !/incomplete|estimat/.test(dt);
+
+      const key = `${datetime}|${label.toUpperCase()}|${lastLoc}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+
+      events.push({
+        event_code: null,
+        event_name: label,
+        normalized_status: maerskMove(label),
+        location: lastLoc,
+        datetime,
+        raw_text: label,
+        raw_datetime: datetime,
+        is_actual: isActual,
+        timezone: null,
+        timezone_confidence: 'unknown',
+      });
+    });
+
+    if (events.length === 0) {
+      r.error = {
+        code: ErrorCode.PARSING_FAILED,
+        message: 'Maersk data page fetched but no milestones could be parsed',
+        source: this.name,
+      };
+      return r;
+    }
+
+    events.sort((a, b) => ts(a.datetime) - ts(b.datetime));
+    const actual = events.filter((e) => e.is_actual && e.datetime);
+    const last = actual.length ? actual[actual.length - 1] : events[events.length - 1];
+
+    r.origin =
+      $('[data-test="track-from-value"]').first().text().trim() || events[0].location;
+    r.destination =
+      $('[data-test="track-to-value"]').first().text().trim() ||
+      events[events.length - 1].location;
+
+    // ETA = arrival at the destination port (or the last arrival in the chain).
+    const arrivals = events.filter((e) => /arrival/i.test(e.event_name ?? ''));
+    const podArrival =
+      arrivals.reverse().find((e) => e.location === r.destination) ?? arrivals[0];
+    if (podArrival) r.eta = podArrival.datetime;
+
+    // Container type, e.g. "MSKU... | 40' Dry High" → "40' Dry High".
+    const details = $('[data-test="container-details"]').first().text();
+    const typeM = details.split('|').pop()?.trim();
+    if (typeM && !/^[A-Z]{4}\d{7}$/.test(typeM)) {
+      r.container_milestones = { container_type: typeM };
+    }
+
+    r.carrier = { name: 'Maersk', code: 'MAEU', source: 'pier2pier' };
+
+    let current = last.normalized_status;
+    if (
+      current === 'arrived' &&
+      events.some((e) => !e.is_actual) &&
+      r.destination &&
+      last.location &&
+      last.location !== r.destination
+    ) {
+      current = 'in_transit';
+    }
+
+    r.found = true;
+    r.events = events;
+    r.current_status = current;
+    r.raw_status = last.raw_text;
+    return r;
+  }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -662,6 +767,37 @@ const HAPAG_RULES: Array<[RegExp, NormalizedStatus]> = [
 function hapagMove(status: string): NormalizedStatus {
   for (const [re, s] of HAPAG_RULES) if (re.test(status)) return s;
   return 'unknown';
+}
+
+/** Maersk milestone vocabulary → normalized status (ТЗ §7). */
+const MAERSK_RULES: Array<[RegExp, NormalizedStatus]> = [
+  [/EMPTY\s+CONTAINER\s+RETURN|EMPTY\s+RETURN/i, 'container_returned'],
+  [/GATE\s+OUT\s+EMPTY/i, 'container_picked_up'],
+  [/GATE\s+IN|RECEIVED/i, 'in_origin_terminal'],
+  [/LOAD\s+ON|LOADED/i, 'in_origin_terminal'],
+  [/VESSEL\s+DEPARTURE|DEPARTED/i, 'departed'],
+  [/TRANSSHIP|TRANSHIP/i, 'in_transit'],
+  [/VESSEL\s+ARRIVAL|ARRIVED/i, 'arrived'],
+  [/DISCHARGE|DISCHARGED/i, 'arrived'],
+  [/GATE\s+OUT\s+FOR\s+DELIVERY|OUT\s+FOR\s+DELIVERY|DELIVERED/i, 'delivered'],
+  [/CUSTOMS|CLEARED/i, 'customs'],
+  [/AVAILABLE\s+FOR/i, 'ready_for_pickup'],
+];
+
+function maerskMove(label: string): NormalizedStatus {
+  for (const [re, s] of MAERSK_RULES) if (re.test(label)) return s;
+  return 'unknown';
+}
+
+/** "17 Mar 2026 18:41" → "2026-03-17T18:41:00" (no tz). */
+function maerskDate(s: string): string | null {
+  const m = s.match(/(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/);
+  if (!m) return null;
+  const mon = MONTHS[m[2].toUpperCase()];
+  if (!mon) return null;
+  const hh = m[4] ? m[4].padStart(2, '0') : '00';
+  const mm = m[5] ?? '00';
+  return `${m[3]}-${mon}-${m[1].padStart(2, '0')}T${hh}:${mm}:00`;
 }
 
 /** Minimal SCAC → carrier name map for common lines (extend as needed). */
