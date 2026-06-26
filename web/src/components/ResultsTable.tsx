@@ -164,23 +164,26 @@ function Row({
         <td className="mono">{last ? fmtDate(last.datetime) : '—'}</td>
         <td>
           {hasError ? (
-            onRetry ? (
-              <button
-                type="button"
-                className="pill bad retry"
-                title="Повторити запит для цього номера"
-                disabled={loading}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRetry(index);
-                }}
-              >
-                <span className="retry-glyph">{loading ? '⟳' : '↻'}</span>
-                {loading ? 'Повтор…' : r.errors[0].code}
-              </button>
-            ) : (
-              <span className="pill bad">{r.errors[0].code}</span>
-            )
+            <div className="src-cell">
+              {srcSuffix && <span className="src-carrier">{srcSuffix}</span>}
+              {onRetry ? (
+                <button
+                  type="button"
+                  className="pill bad retry"
+                  title="Повторити запит для цього номера"
+                  disabled={loading}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRetry(index);
+                  }}
+                >
+                  <span className="retry-glyph">{loading ? '⟳' : '↻'}</span>
+                  {loading ? 'Повтор…' : r.errors[0].code}
+                </button>
+              ) : (
+                <span className="pill bad">{r.errors[0].code}</span>
+              )}
+            </div>
           ) : r.source.final_source ? (
             <span className="src">
               {r.source.final_source}
