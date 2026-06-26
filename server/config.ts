@@ -59,7 +59,7 @@ export const config = {
    * to process all numbers at once. The per-lane gap (cargoaiMinGapMs) still
    * paces each key. Lower if you run without a proxy and see 429s.
    */
-  concurrency: int('CONCURRENCY', 8),
+  concurrency: int('CONCURRENCY', 4),
 
   /**
    * Sea (Pier2Pier) is slower and primes cookies across requests, plus it can
