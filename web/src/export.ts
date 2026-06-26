@@ -15,7 +15,14 @@ function flatRow(r: ShipmentResult) {
     origin: r.tracking.route.origin ?? '',
     destination: r.tracking.route.destination ?? '',
     last_event_at: r.tracking.last_event?.datetime ?? '',
-    source: r.source.final_source ?? '',
+    source: r.source.final_source
+      ? r.source.final_source +
+        (r.detected.carrier?.name
+          ? `:${r.detected.carrier.name}`
+          : r.source.source_variant
+            ? `:${r.source.source_variant}`
+            : '')
+      : '',
     confidence: r.quality.confidence,
     errors: r.errors.map((e) => e.code).join('; '),
   };

@@ -746,3 +746,10 @@ tr.placeholder td {
 tr.reloading {
   opacity: 0.72;
 }
+
+/* Source cell: carrier/markup-parser variant after the source name. */
+.src-variant {
+  color: var(--muted);
+  font-weight: 600;
+  margin-left: 1px;
+}

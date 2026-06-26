@@ -227,9 +227,19 @@ export class Pier2PierConnector implements Connector {
    * detect the format and dispatch. Never fabricates data.
    */
   private parse(html: string, r: TrackResult, carrierCode: string | null): TrackResult {
-    if (/msc-flow-tracking/i.test(html)) return this.parseMsc(html, r);
-    if (/tracing_by_container|hl-tbl/i.test(html)) return this.parseHapag(html, r);
-    if (/transport-plan__list|data-test="transport-plan"/i.test(html)) return this.parseMaersk(html, r);
+    if (/msc-flow-tracking/i.test(html)) {
+      r.source_variant = 'msc';
+      return this.parseMsc(html, r);
+    }
+    if (/tracing_by_container|hl-tbl/i.test(html)) {
+      r.source_variant = 'hapag-lloyd';
+      return this.parseHapag(html, r);
+    }
+    if (/transport-plan__list|data-test="transport-plan"/i.test(html)) {
+      r.source_variant = 'maersk';
+      return this.parseMaersk(html, r);
+    }
+    r.source_variant = 'kendo';
     return this.parseKendo(html, r, carrierCode);
   }
 

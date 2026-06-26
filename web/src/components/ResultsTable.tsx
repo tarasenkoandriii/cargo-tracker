@@ -136,6 +136,9 @@ function Row({
   const ty = typeInfo(r.detected.type);
   const hasError = r.errors.length > 0;
   const last = r.tracking.last_event;
+  // Show the carrier name after the source (e.g. "pier2pier.com:Hapag-Lloyd");
+  // fall back to the markup-parser variant if the carrier wasn't resolved.
+  const srcSuffix = r.detected.carrier?.name ?? r.source.source_variant ?? null;
 
   return (
     <>
@@ -178,8 +181,13 @@ function Row({
             ) : (
               <span className="pill bad">{r.errors[0].code}</span>
             )
+          ) : r.source.final_source ? (
+            <span className="src">
+              {r.source.final_source}
+              {srcSuffix && <span className="src-variant">:{srcSuffix}</span>}
+            </span>
           ) : (
-            r.source.final_source ?? '—'
+            '—'
           )}
         </td>
       </tr>

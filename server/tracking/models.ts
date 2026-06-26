@@ -109,6 +109,8 @@ export interface TrackResult {
   container_milestones: Record<string, unknown>;
 
   source_name: string | null;
+  /** Which markup parser / carrier layout produced this (sea: kendo|msc|hapag-lloyd|maersk). */
+  source_variant: string | null;
   url: string | null;
 
   warnings: string[];
@@ -131,6 +133,7 @@ export function emptyTrackResult(): TrackResult {
     transit_points: [],
     container_milestones: {},
     source_name: null,
+    source_variant: null,
     url: null,
     warnings: [],
     error: null,

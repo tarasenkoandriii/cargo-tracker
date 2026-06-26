@@ -82,6 +82,7 @@ export class ResponseBuilder {
       source: {
         primary_source: primarySource,
         final_source: result.source_name,
+        source_variant: result.source_variant ?? null,
         url: result.url,
         retrieved_at: retrievedAt,
       },

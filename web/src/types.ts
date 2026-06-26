@@ -60,6 +60,7 @@ export interface ShipmentResult {
   source: {
     primary_source: string | null;
     final_source: string | null;
+    source_variant?: string | null;
     url: string | null;
     retrieved_at: string | null;
   };
