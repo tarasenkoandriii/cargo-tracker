@@ -13,8 +13,10 @@
     "start": "node dist-server/main.js",
     "preview": "vite preview --config web/vite.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test",
-    "copy:schema": "node scripts/copy-schema.cjs"
+    "test": "vitest run",
+    "copy:schema": "node scripts/copy-schema.cjs",
+    "test:watch": "vitest",
+    "test:cov": "vitest run --coverage"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.4",
@@ -36,11 +38,13 @@
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.2",
+    "@vitest/coverage-v8": "^2.1.4",
     "concurrently": "^9.0.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "typescript": "^5.6.2",
     "vite": "^5.4.8",
+    "vitest": "^2.1.4",
     "xlsx": "^0.18.5"
   },
   "engines": {

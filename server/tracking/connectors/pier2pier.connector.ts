@@ -226,6 +226,14 @@ export class Pier2PierConnector implements Connector {
    * Parse the iframe HTML. Pier2Pier embeds carrier-specific layouts, so we
    * detect the format and dispatch. Never fabricates data.
    */
+  /**
+   * Test seam: parse already-fetched iframe HTML directly into a TrackResult,
+   * bypassing the 3-step HTTP flow. Used by unit tests with static fixtures.
+   */
+  parseForTest(html: string, carrierCode: string | null = null): TrackResult {
+    return this.parse(html, emptyTrackResult(), carrierCode);
+  }
+
   private parse(html: string, r: TrackResult, carrierCode: string | null): TrackResult {
     if (/msc-flow-tracking/i.test(html)) {
       r.source_variant = 'msc';

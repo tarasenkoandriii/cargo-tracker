@@ -24,7 +24,7 @@ function int(name: string, def: number): number {
  * request) is ON by default — ideal for dodging any per-IP filtering.
  * Returns null if credentials aren't set.
  */
-function webshareProxyUrl(): string | null {
+export function webshareProxyUrl(): string | null {
   const user = process.env.WEBSHARE_PROXY_USERNAME;
   const pass = process.env.WEBSHARE_PROXY_PASSWORD;
   if (!user || !pass) return null;

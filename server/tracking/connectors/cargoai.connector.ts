@@ -237,6 +237,14 @@ export class CargoAiConnector implements Connector {
    * milestone codes (BKD, RCS, FOH, DEP, ARR, RCF, …) and, for flight legs, a
    * nested `flight` block with scheduled/actual departure & arrival times.
    */
+  /**
+   * Test seam: map a raw CargoAI response into a TrackResult, bypassing HTTP.
+   * `map` does not use the request context, so an empty one is passed.
+   */
+  mapForTest(data: unknown): TrackResult {
+    return this.map(data, {} as TrackContext, emptyTrackResult());
+  }
+
   private map(data: any, ctx: TrackContext, r: TrackResult): TrackResult {
     const shipment = Array.isArray(data) ? data[0] : data;
     const rawEvents: any[] = shipment?.events;

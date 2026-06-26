@@ -250,6 +250,30 @@ Input Parser → Detector → Source Router → Connector(s) → Parser
 | `npm run build` | повний білд для Vercel (server + web + schema) |
 | `npm start` | запуск зібраного бекенду локально |
 | `npm run typecheck` | перевірка типів без емісії |
+| `npm test` | юніт-тести (Vitest) |
+| `npm run test:watch` | юніт-тести у watch-режимі |
+| `npm run test:cov` | юніт-тести + звіт покриття (v8) |
+
+## 10. Тести
+
+Юніт-тести на **Vitest** (нативний TypeScript, спільний раннер для сервера й фронтенду).
+Покривають детермінстичну логіку — там, де помилка коштує найдорожче:
+
+- `detector` — розпізнавання AWB / контейнера, нормалізація номера, контрольна цифра **ISO 6346** (включно з канонічним прикладом `CSQU3054383`);
+- `normalizer` — мапінг сирих статусів у нормалізовані, з пріоритетом морських правил (`gate out empty` → `container_picked_up`, а не `departed`);
+- `response.builder` — **стадійно-залежна повнота даних**: `PARTIAL_DATA` не вішається на контейнер у дорозі без `actual_arrival`, але вішається на пост-прибуттєвий без нього; проброс `source.source_variant`;
+- `config` — складання Webshare backbone-URL (`-rotate`, країна, host/port);
+- `pier2pier` — **4 markup-парсери** (Kendo/CMA, MSC, Hapag-Lloyd, Maersk) на мінімальних HTML-фікстурах: розбір рухів, POL/POD, ETA, маршрут, диспетчеризація за маркерами iframe, `PARSING_FAILED` на порожній сторінці;
+- `cargoai` — маппер відповіді: статус із останньої фактичної події, виведення `etd/eta/actual_*` з рейсів, хронологічний порядок, мапінг IATA-кодів, `NOT_FOUND` без подій;
+- `web/src/rows` — потоковий рендер: пул конкурентності, жива зведена статистика, синтез error-рядка, імутабельний патч рядка.
+
+```bash
+npm install   # підтягне vitest + @vitest/coverage-v8
+npm test
+npm run test:cov   # HTML-звіт у coverage/
+```
+
+Файли тестів — поряд із кодом, що тестують (`*.spec.ts`).
 
 ---
 
