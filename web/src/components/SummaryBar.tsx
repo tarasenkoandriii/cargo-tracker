@@ -1,8 +1,16 @@
-import type { TrackResponse } from '../types';
 import { fmtDate } from '../status';
+import type { RowSummary } from '../rows';
 
-export function SummaryBar({ data }: { data: TrackResponse }) {
-  const { summary } = data;
+export function SummaryBar({
+  summary,
+  checkedAt,
+  running,
+}: {
+  summary: RowSummary;
+  checkedAt: string;
+  running?: boolean;
+}) {
+  const done = summary.total - summary.pending;
   return (
     <div className="summary">
       <div className="tally total">
@@ -18,10 +26,18 @@ export function SummaryBar({ data }: { data: TrackResponse }) {
         <div className="k">З помилками</div>
       </div>
       <div className="tally">
-        <div className="k">Запит</div>
-        <div className="req">{data.request_id}</div>
+        <div className="k">{running ? 'Завантаження' : 'Готово'}</div>
+        <div className="req">
+          {running ? (
+            <>
+              <span className="spinner sm" /> {done}/{summary.total}
+            </>
+          ) : (
+            `${done}/${summary.total} опрацьовано`
+          )}
+        </div>
         <div className="req" style={{ marginTop: 4 }}>
-          {fmtDate(data.checked_at)}
+          {fmtDate(checkedAt)}
         </div>
       </div>
     </div>

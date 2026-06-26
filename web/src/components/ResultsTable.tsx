@@ -1,21 +1,33 @@
-import { useState } from 'react';
-import type { ShipmentResult, TrackResponse } from '../types';
+import { useMemo, useState } from 'react';
+import type { RowState, ShipmentResult, TrackResponse } from '../types';
 import { statusInfo, typeInfo, fmtDate } from '../status';
 import { ShipmentDetail } from './ShipmentDetail';
 import { exportJson, exportCsv, exportXlsx } from '../export';
 
 export function ResultsTable({
-  data,
+  rows,
+  checkedAt,
   onRetry,
-  retrying,
 }: {
-  data: TrackResponse;
+  rows: RowState[];
+  checkedAt?: string | null;
   onRetry?: (index: number) => void;
-  retrying?: Set<number>;
 }) {
   const [open, setOpen] = useState<number | null>(null);
 
-  if (!data.results.length) {
+  // Build an export payload from whatever has loaded so far.
+  const exportData = useMemo<TrackResponse>(() => {
+    const results = rows.map((r) => r.result).filter(Boolean) as ShipmentResult[];
+    const failed = results.filter((r) => r.errors.length > 0).length;
+    return {
+      request_id: 'live',
+      checked_at: checkedAt ?? new Date().toISOString(),
+      summary: { total: results.length, success: results.length - failed, failed },
+      results,
+    };
+  }, [rows, checkedAt]);
+
+  if (!rows.length) {
     return (
       <div className="panel">
         <div className="empty">
@@ -26,17 +38,19 @@ export function ResultsTable({
     );
   }
 
+  const anyLoaded = rows.some((r) => r.result);
+
   return (
     <div>
       <div className="toolbar">
         <span className="grow" />
-        <button className="btn-ghost" onClick={() => exportJson(data)}>
+        <button className="btn-ghost" disabled={!anyLoaded} onClick={() => exportJson(exportData)}>
           JSON
         </button>
-        <button className="btn-ghost" onClick={() => exportCsv(data)}>
+        <button className="btn-ghost" disabled={!anyLoaded} onClick={() => exportCsv(exportData)}>
           CSV
         </button>
-        <button className="btn-ghost" onClick={() => exportXlsx(data)}>
+        <button className="btn-ghost" disabled={!anyLoaded} onClick={() => exportXlsx(exportData)}>
           Excel
         </button>
       </div>
@@ -55,15 +69,14 @@ export function ResultsTable({
           </tr>
         </thead>
         <tbody>
-          {data.results.map((r, i) => (
+          {rows.map((row, i) => (
             <Row
               key={i}
-              r={r}
+              row={row}
               index={i}
               isOpen={open === i}
-              onToggle={() => setOpen(open === i ? null : i)}
+              onToggle={() => row.result && setOpen(open === i ? null : i)}
               onRetry={onRetry}
-              isRetrying={!!retrying?.has(i)}
             />
           ))}
         </tbody>
@@ -72,21 +85,53 @@ export function ResultsTable({
   );
 }
 
+function Spinner() {
+  return <span className="spinner" aria-label="завантаження" />;
+}
+
 function Row({
-  r,
+  row,
   index,
   isOpen,
   onToggle,
   onRetry,
-  isRetrying,
 }: {
-  r: ShipmentResult;
+  row: RowState;
   index: number;
   isOpen: boolean;
   onToggle: () => void;
   onRetry?: (index: number) => void;
-  isRetrying?: boolean;
 }) {
+  const { input, loading, result: r } = row;
+
+  // Placeholder: row exists but data hasn't arrived yet → spinner + skeletons.
+  if (!r) {
+    return (
+      <tr className="placeholder">
+        <td>
+          <Spinner />
+        </td>
+        <td className="mono">{input.id ?? '—'}</td>
+        <td className="num">{input.number}</td>
+        <td>
+          <span className="skeleton w-72" />
+        </td>
+        <td>
+          <span className="skeleton w-90" />
+        </td>
+        <td>
+          <span className="skeleton w-64" />
+        </td>
+        <td>
+          <span className="skeleton w-80" />
+        </td>
+        <td>
+          <span className="skeleton w-72" />
+        </td>
+      </tr>
+    );
+  }
+
   const st = statusInfo(r.tracking.current_status);
   const ty = typeInfo(r.detected.type);
   const hasError = r.errors.length > 0;
@@ -94,12 +139,13 @@ function Row({
 
   return (
     <>
-      <tr className={`clickable ${isOpen ? 'open' : ''}`} onClick={onToggle}>
-        <td>
-          <span className="chev">▶</span>
-        </td>
-        <td className="mono">{r.input.id ?? '—'}</td>
-        <td className="num">{r.input.number}</td>
+      <tr
+        className={`clickable ${isOpen ? 'open' : ''} ${loading ? 'reloading' : ''}`}
+        onClick={onToggle}
+      >
+        <td>{loading ? <Spinner /> : <span className="chev">▶</span>}</td>
+        <td className="mono">{input.id ?? '—'}</td>
+        <td className="num">{input.number}</td>
         <td>
           <span className="type-glyph">
             <span className={`g ${ty.cls}`}>{ty.glyph}</span>
@@ -120,14 +166,14 @@ function Row({
                 type="button"
                 className="pill bad retry"
                 title="Повторити запит для цього номера"
-                disabled={isRetrying}
+                disabled={loading}
                 onClick={(e) => {
                   e.stopPropagation();
                   onRetry(index);
                 }}
               >
-                <span className="retry-glyph">{isRetrying ? '⟳' : '↻'}</span>
-                {isRetrying ? 'Повтор…' : r.errors[0].code}
+                <span className="retry-glyph">{loading ? '⟳' : '↻'}</span>
+                {loading ? 'Повтор…' : r.errors[0].code}
               </button>
             ) : (
               <span className="pill bad">{r.errors[0].code}</span>
@@ -137,7 +183,7 @@ function Row({
           )}
         </td>
       </tr>
-      {isOpen && (
+      {isOpen && r && (
         <tr className="detail">
           <td colSpan={8} style={{ padding: 0 }}>
             <ShipmentDetail r={r} />

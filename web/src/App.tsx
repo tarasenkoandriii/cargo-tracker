@@ -1,70 +1,63 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { InputPanel } from './components/InputPanel';
 import { SummaryBar } from './components/SummaryBar';
 import { ResultsTable } from './components/ResultsTable';
 import { track } from './api';
-import type { ShipmentInputItem, TrackResponse } from './types';
+import type { RowState, ShipmentInputItem } from './types';
+import { makeErrorResult, patchRow, runPool, summarize } from './rows';
+
+// How many per-shipment requests the browser keeps in flight at once. Each is an
+// isolated single-number serverless call (fresh proxy IP, no batch burst), so a
+// modest pool streams results in quickly without hammering the upstream API.
+const CLIENT_CONCURRENCY = 5;
 
 export default function App() {
   const [demo, setDemo] = useState(true);
-  const [loading, setLoading] = useState(false);
+  const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<TrackResponse | null>(null);
-  const [retrying, setRetrying] = useState<Set<number>>(new Set());
+  const [rows, setRows] = useState<RowState[] | null>(null);
+  const [checkedAt, setCheckedAt] = useState<string | null>(null);
 
-  async function run(shipments: ShipmentInputItem[]) {
-    setLoading(true);
-    setError(null);
+  const summary = useMemo(() => (rows ? summarize(rows) : null), [rows]);
+
+  // Track one shipment and write its result into the given row. Shared by the
+  // initial run and per-row retry.
+  async function fetchInto(index: number, input: ShipmentInputItem) {
     try {
-      const res = await track(shipments, { demo });
-      setData(res);
+      const res = await track([{ id: input.id ?? undefined, number: input.number }], { demo });
+      const fresh = res.results[0] ?? makeErrorResult(input, 'Порожня відповідь сервера');
+      setRows((prev) => patchRow(prev, index, { loading: false, result: fresh }));
     } catch (err) {
-      setError(String((err as Error).message));
-    } finally {
-      setLoading(false);
+      setRows((prev) =>
+        patchRow(prev, index, {
+          loading: false,
+          result: makeErrorResult(input, String((err as Error).message)),
+        }),
+      );
     }
   }
 
-  // Re-track a SINGLE number on demand (one request, no batch burst) and merge
-  // the fresh result back into its row. Lets the user recover stragglers that
-  // failed during the full run without re-querying everything (saves quota and
-  // avoids the per-second limits a 10-number burst can hit).
-  async function retryOne(index: number) {
-    const current = data?.results[index];
-    if (!current || retrying.has(index)) return;
-    setRetrying((s) => new Set(s).add(index));
+  // Click "Відстежити": render placeholders immediately, then stream each row in.
+  async function run(shipments: ShipmentInputItem[]) {
+    if (!shipments.length) return;
     setError(null);
-    try {
-      const res = await track(
-        [{ id: current.input.id ?? undefined, number: current.input.number }],
-        { demo },
-      );
-      const fresh = res.results[0];
-      setData((prev) => {
-        if (!prev || !fresh) return prev;
-        const results = prev.results.slice();
-        results[index] = fresh;
-        const failed = results.filter((x) => x.errors.length > 0).length;
-        return {
-          ...prev,
-          results,
-          checked_at: res.checked_at ?? prev.checked_at,
-          summary: {
-            total: results.length,
-            success: results.length - failed,
-            failed,
-          },
-        };
-      });
-    } catch (err) {
-      setError(String((err as Error).message));
-    } finally {
-      setRetrying((s) => {
-        const n = new Set(s);
-        n.delete(index);
-        return n;
-      });
-    }
+    setRunning(true);
+    setCheckedAt(new Date().toISOString());
+    setRows(shipments.map((s) => ({ input: s, loading: true, result: null })));
+
+    await runPool(shipments, CLIENT_CONCURRENCY, (s, i) => fetchInto(i, s));
+
+    setCheckedAt(new Date().toISOString());
+    setRunning(false);
+  }
+
+  // Re-track a single row on demand (failed straggler or refresh).
+  async function retryOne(index: number) {
+    const row = rows?.[index];
+    if (!row || row.loading) return;
+    setError(null);
+    setRows((prev) => patchRow(prev, index, { loading: true }));
+    await fetchInto(index, row.input);
   }
 
   return (
@@ -84,21 +77,23 @@ export default function App() {
 
       <main className="shell">
         <aside>
-          <InputPanel demo={demo} setDemo={setDemo} loading={loading} onRun={run} />
+          <InputPanel demo={demo} setDemo={setDemo} loading={running} onRun={run} />
           {error && <div className="error-banner">{error}</div>}
         </aside>
 
         <section>
-          {data && <SummaryBar data={data} />}
-          {data ? (
-            <ResultsTable data={data} onRetry={retryOne} retrying={retrying} />
+          {summary && checkedAt && (
+            <SummaryBar summary={summary} checkedAt={checkedAt} running={running} />
+          )}
+          {rows ? (
+            <ResultsTable rows={rows} checkedAt={checkedAt} onRetry={retryOne} />
           ) : (
             <div className="panel">
               <div className="empty">
                 <div className="big">Готово до роботи</div>
                 Вставте номери AWB або контейнерів і натисніть «Відстежити».
-                У демо-режимі відповідь формується локально й показує всі три
-                сценарії: знайдено, не знайдено, невірний формат.
+                Рядки з’являться одразу, а дані підвантажаться по кожному
+                відправленню окремо.
               </div>
             </div>
           )}

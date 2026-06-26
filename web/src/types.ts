@@ -88,3 +88,10 @@ export interface ShipmentInputItem {
   carrier?: string | null;
   comment?: string | null;
 }
+
+/** Per-row UI state for progressive (streaming) rendering. */
+export interface RowState {
+  input: ShipmentInputItem;
+  loading: boolean;
+  result: ShipmentResult | null;
+}
